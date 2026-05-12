@@ -1,9 +1,11 @@
 import { Sequelize } from "sequelize";
-import logger from "../config/logger.js";
-import migrationService from "./migration.service.js";
-import dotenv from "dotenv";
-
-dotenv.config();
+import logger from "../config/logger";
+import migrationService from "./migration.service";
+import Tenant from "../database/models/system/Tenant";
+import UserModel from "../database/models/tenant/UserModel";
+import ProgramsModel from "../database/models/tenant/ProgramsModel";
+import SessionModel from "../database/models/tenant/SessionModel";
+import AuditLogModel from "../database/models/tenant/AuditLogModel";
 
 const databaseName = process.env.DATABASE_NAME as string;
 const databaseUser = process.env.DATABASE_USER as string;
@@ -62,7 +64,21 @@ class DatabaseService {
   }
 
   async registerModels(connection: Sequelize) {
-    // todo: register the models for the wellspring schema
+    const models = {
+      Tenant: Tenant.initModel(connection),
+      UserModel: UserModel.initUserModel(connection),
+      ProgramsModel: ProgramsModel.initProgramsModel(connection),
+      SessionModel: SessionModel.initSessionModel(connection),
+      AuditLogModel: AuditLogModel.initAuditLogModel(connection),
+    };
+
+    Object.values(models).forEach((model: any) => {
+      if (typeof model.associate === "function") {
+        model.associate(models);
+      }
+    });
+
+    logger.info("Models registered and associations established.");
   }
 
   async cleanUp() {

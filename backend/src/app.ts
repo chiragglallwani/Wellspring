@@ -33,7 +33,7 @@ async function intializeDatabase() {
 
 // todo: add the mountServiceRoutes function to have csrf protection, auth middleware checks on all authenticated routes
 
-await intializeDatabase();
+intializeDatabase();
 eventService.registerHandlers();
 const app = express();
 app.use(asyncStorageMiddleware);
