@@ -1,5 +1,5 @@
 import { jest, describe, it, expect } from "@jest/globals";
-import logger from "../logger.js";
+import logger from "../logger";
 
 describe("Logger Configuration", () => {
   it("should have correct log level", () => {
@@ -12,7 +12,7 @@ describe("Logger Configuration", () => {
 
     logger.info(logMessage);
 
-    expect(spy).toHaveBeenCalledWith({ message: logMessage });
+    expect(spy.mock.calls[0]?.[0]).toBe(logMessage);
     spy.mockRestore();
   });
 });

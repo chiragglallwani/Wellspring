@@ -30,14 +30,11 @@ export const signup = async (req: Request, res: Response) => {
 };
 
 export const login = async (req: Request, res: Response) => {
-  const { email, password, tenantId } = req.body;
-  const result = await authService.login({ email, password, tenantId });
+  const { email, password } = req.body;
+  const result = await authService.login({ email, password });
   setAuthHeaders(res, result.data);
 
-  res.status(200).json({
-    status: ApiResponseStatus.SUCCESS,
-    message: "Login successful",
-  });
+  res.status(200).json(result);
 };
 
 export const refresh = async (req: Request, res: Response) => {

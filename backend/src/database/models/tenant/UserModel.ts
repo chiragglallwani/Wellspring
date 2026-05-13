@@ -33,7 +33,7 @@ class UserModel extends BaseModel {
           allowNull: false,
         },
         refreshToken: {
-          type: DataTypes.STRING,
+          type: DataTypes.TEXT,
           allowNull: true,
         },
       },

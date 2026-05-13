@@ -4,6 +4,7 @@ import { EventTypes } from "../../events/types/EventTypes";
 import eventService from "../../events/event.service";
 import { ApiResponseStatus } from "../../constants/apiResponse";
 import logger from "../../config/logger";
+import s3Service from "../storage/s3.service";
 
 type SessionPayload = {
   program_id: string;
@@ -14,7 +15,10 @@ type SessionPayload = {
   ordered_position: number;
   instructor_name: string;
   tags?: string[];
-  media_file_path: string;
+  /** S3 object key returned from POST /uploads/presign (`key`). */
+  object_key?: string;
+  /** Same value as object_key; use one or the other. Validated against tenant/program and HeadObject. */
+  media_file_path?: string;
 };
 
 type SessionListParams = {
@@ -22,7 +26,7 @@ type SessionListParams = {
   page: number;
   limit: number;
   offset: number;
-  programId?: string;
+  programId: string;
 };
 
 type ReorderSessionPayload = {
@@ -31,6 +35,36 @@ type ReorderSessionPayload = {
 };
 
 class SessionService {
+  private async resolveSessionMediaStorageKey(
+    tenantId: string,
+    programId: string,
+    payload: Pick<SessionPayload, "object_key" | "media_file_path">,
+  ): Promise<string> {
+    const fromObjectKey =
+      payload.object_key !== undefined ? payload.object_key.trim() : "";
+    const fromPath =
+      payload.media_file_path !== undefined
+        ? payload.media_file_path.trim()
+        : "";
+
+    const key = fromObjectKey || fromPath;
+    if (!key) {
+      throw new HttpError(
+        400,
+        "Provide object_key from the presign response or media_file_path with the same storage key",
+      );
+    }
+    if (fromObjectKey && fromPath && fromObjectKey !== fromPath) {
+      throw new HttpError(
+        400,
+        "object_key and media_file_path must match when both are provided",
+      );
+    }
+
+    await s3Service.validateSessionMediaObjectKey(programId, key);
+    return key;
+  }
+
   async createSession(
     tenantId: string,
     actor: string,
@@ -40,10 +74,24 @@ class SessionService {
 
     try {
       logger.info("Creating session");
+      const media_file_path = await this.resolveSessionMediaStorageKey(
+        tenantId,
+        payload.program_id,
+        payload,
+      );
+
       const session = await SessionModel.create(
         {
           tenant_id: tenantId,
-          ...payload,
+          program_id: payload.program_id,
+          client_key: payload.client_key,
+          type: payload.type,
+          title: payload.title,
+          duration: payload.duration,
+          ordered_position: payload.ordered_position,
+          instructor_name: payload.instructor_name,
+          tags: payload.tags,
+          media_file_path,
         },
         { transaction },
       );
@@ -79,7 +127,7 @@ class SessionService {
     try {
       logger.info("Fetching sessions");
       const { rows, count } = await SessionModel.findAndCountAll({
-        where: params.programId ? { program_id: params.programId } : {},
+        where: { program_id: params.programId },
         order: [["ordered_position", "ASC"]],
         limit: params.limit,
         offset: params.offset,
@@ -155,7 +203,36 @@ class SessionService {
         throw new HttpError(404, "Session not found");
       }
 
-      await session.update(payload, { transaction });
+      const updateData: Record<string, unknown> = { ...payload };
+      delete updateData.object_key;
+
+      const hasOkObjectKey =
+        payload.object_key !== undefined &&
+        payload.object_key.trim() !== "";
+      const hasOkMediaPath =
+        payload.media_file_path !== undefined &&
+        payload.media_file_path.trim() !== "";
+
+      if (hasOkObjectKey || hasOkMediaPath) {
+        const mediaPayload: Pick<
+          SessionPayload,
+          "object_key" | "media_file_path"
+        > = {};
+        if (hasOkObjectKey && payload.object_key) {
+          mediaPayload.object_key = payload.object_key.trim();
+        }
+        if (hasOkMediaPath && payload.media_file_path) {
+          mediaPayload.media_file_path = payload.media_file_path.trim();
+        }
+        const mediaPath = await this.resolveSessionMediaStorageKey(
+          tenantId,
+          session.program_id,
+          mediaPayload,
+        );
+        updateData.media_file_path = mediaPath;
+      }
+
+      await session.update(updateData, { transaction });
       await transaction.commit();
       logger.info("Session updated successfully");
 

@@ -60,7 +60,7 @@ const limiter = rateLimit({
   headers: true,
 });
 app.use(limiter);
-app.use("/api", routes);
+app.use("/api/v1", routes);
 app.use(errorMiddleware);
 
 intializeDatabase()

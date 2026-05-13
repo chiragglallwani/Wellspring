@@ -13,6 +13,7 @@ const getSessionPayload = (req: Request) => {
     instructor_name,
     tags,
     media_file_path,
+    object_key,
   } = req.body;
 
   return {
@@ -25,6 +26,7 @@ const getSessionPayload = (req: Request) => {
     instructor_name,
     tags,
     media_file_path,
+    object_key,
   };
 };
 
@@ -45,7 +47,7 @@ export const listSessions = async (req: Request, res: Response) => {
     page,
     limit,
     offset,
-    ...(req.query.programId ? { programId: req.query.programId as string } : {}),
+    programId: req.query.programId as string,
   };
   const result = await sessionService.listSessions(params);
 

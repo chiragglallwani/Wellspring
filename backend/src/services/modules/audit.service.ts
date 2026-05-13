@@ -18,19 +18,41 @@ class AuditService {
     actor: string,
     action: string,
     targetEntity: string,
-    transaction: Transaction,
+    transaction?: Transaction,
   ) {
-    await AuditLogModel.create(
-      {
-        tenant_id: tenantId,
-        actor,
-        action,
-        target_entity: targetEntity,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      { transaction },
-    );
+    if (transaction) {
+      await AuditLogModel.create(
+        {
+          tenant_id: tenantId,
+          actor,
+          action,
+          target_entity: targetEntity,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        { transaction },
+      );
+      return;
+    }
+
+    const localTx = await AuditLogModel.sequelize!.transaction();
+    try {
+      await AuditLogModel.create(
+        {
+          tenant_id: tenantId,
+          actor,
+          action,
+          target_entity: targetEntity,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        { transaction: localTx },
+      );
+      await localTx.commit();
+    } catch (error) {
+      await localTx.rollback();
+      throw error;
+    }
   }
 
   async getAuditLogs(filters: AuditFilters) {

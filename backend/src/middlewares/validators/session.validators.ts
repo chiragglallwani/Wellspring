@@ -1,9 +1,9 @@
 import { body, param, query } from "express-validator";
 
 export const listSessionsValidator = [
-  query("page").optional().isInt({ min: 1 }).toInt(),
-  query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
-  query("programId").optional().isUUID(),
+  query("page").isInt({ min: 1 }).toInt(),
+  query("limit").isInt({ min: 1, max: 100 }).toInt(),
+  query("programId").isUUID(),
 ];
 
 export const createSessionValidator = [
@@ -16,12 +16,30 @@ export const createSessionValidator = [
   body("instructor_name").isString().trim().notEmpty(),
   body("tags").optional().isArray(),
   body("tags.*").optional().isString().trim().notEmpty(),
-  body("media_file_path").isString().trim().notEmpty(),
+  body("media_file_path").optional().isString().trim().notEmpty(),
+  body("object_key").optional().isString().trim().notEmpty(),
+  body().custom((_value, { req }) => {
+    const objectKey =
+      typeof req.body?.object_key === "string" ? req.body.object_key.trim() : "";
+    const mediaPath =
+      typeof req.body?.media_file_path === "string"
+        ? req.body.media_file_path.trim()
+        : "";
+    if (!objectKey && !mediaPath) {
+      throw new Error(
+        "Provide object_key from the presign response (recommended) or media_file_path with the same S3 key",
+      );
+    }
+    if (objectKey && mediaPath && objectKey !== mediaPath) {
+      throw new Error(
+        "object_key and media_file_path must match when both are sent",
+      );
+    }
+    return true;
+  }),
 ];
 
-export const getSessionValidator = [
-  param("sessionId").isUUID(),
-];
+export const getSessionValidator = [param("sessionId").isUUID()];
 
 export const updateSessionValidator = [
   param("sessionId").isUUID(),
@@ -35,11 +53,24 @@ export const updateSessionValidator = [
   body("tags").optional().isArray(),
   body("tags.*").optional().isString().trim().notEmpty(),
   body("media_file_path").optional().isString().trim().notEmpty(),
+  body("object_key").optional().isString().trim().notEmpty(),
+  body().custom((_value, { req }) => {
+    const objectKey =
+      typeof req.body?.object_key === "string" ? req.body.object_key.trim() : "";
+    const mediaPath =
+      typeof req.body?.media_file_path === "string"
+        ? req.body.media_file_path.trim()
+        : "";
+    if (objectKey && mediaPath && objectKey !== mediaPath) {
+      throw new Error(
+        "object_key and media_file_path must match when both are sent",
+      );
+    }
+    return true;
+  }),
 ];
 
-export const deleteSessionValidator = [
-  param("sessionId").isUUID(),
-];
+export const deleteSessionValidator = [param("sessionId").isUUID()];
 
 export const reorderSessionsValidator = [
   body("sessions").isArray({ min: 1 }),

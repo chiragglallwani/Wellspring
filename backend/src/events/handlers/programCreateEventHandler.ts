@@ -11,7 +11,7 @@ type ProgramCreateEventHandlerData = {
   transaction: Transaction;
 };
 
-const programCreateEventHandler = async (
+const ProgramCreateEventHandler = async (
   data: ProgramCreateEventHandlerData,
 ) => {
   try {
@@ -28,4 +28,4 @@ const programCreateEventHandler = async (
   }
 };
 
-export default programCreateEventHandler;
+export default ProgramCreateEventHandler;

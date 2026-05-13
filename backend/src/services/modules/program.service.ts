@@ -31,7 +31,7 @@ class ProgramService {
 
     try {
       logger.info("Creating program");
-      const program = await ProgramsModel.create(
+      await ProgramsModel.create(
         {
           tenant_id: tenantId,
           program_id: crypto.randomUUID(),
@@ -45,7 +45,6 @@ class ProgramService {
         actor,
         action: EventTypes.PROGRAM_CREATED,
         targetEntity: "ProgramsModel",
-        transaction,
       });
 
       await transaction.commit();
@@ -54,7 +53,6 @@ class ProgramService {
       return {
         status: ApiResponseStatus.SUCCESS,
         message: "Program created successfully",
-        data: program,
       };
     } catch (error) {
       await transaction.rollback();

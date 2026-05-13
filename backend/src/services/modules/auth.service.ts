@@ -15,6 +15,10 @@ import {
   signRefreshJwt,
 } from "../../utils/token";
 import { ApiResponseStatus } from "../../constants/apiResponse";
+import { setAsyncStorage } from "../../utils/asyncstorage";
+import logger from "../../config/logger";
+import eventService from "../../events/event.service";
+import { EventTypes } from "../../events/types/EventTypes";
 
 type SignupPayload = {
   name: string;
@@ -25,7 +29,6 @@ type SignupPayload = {
 type LoginPayload = {
   email: string;
   password: string;
-  tenantId?: string;
 };
 
 type RefreshPayload = {
@@ -68,26 +71,27 @@ class AuthService {
     throw new HttpError(409, "Unable to generate unique tenant ID");
   }
 
-  private async resolveTenantId(email: string, tenantId?: string) {
-    if (tenantId) {
-      return tenantId;
-    }
-
+  private async resolveTenantId(email: string) {
     const tenant = await Tenant.findOne({ where: { email } });
 
     if (!tenant) {
       throw new HttpError(404, "Tenant not found for email");
     }
 
-    return tenant.get("tenant_id") as string;
+    logger.info("Tenant found", { tenantId: tenant.tenant_id });
+
+    setAsyncStorage({ tenantId: tenant.tenant_id });
+
+    return tenant;
   }
 
-  private createSessionTokens(user: UserModel, tenantId: string) {
+  private createSessionTokens(user: UserModel, tenant: Tenant) {
     const payload = {
-      userId: user.get("user_id") as string,
-      tenantId,
-      usersFullName: user.get("name") as string,
-      userEmail: user.get("email") as string,
+      tenantId: tenant.tenant_id,
+      userId: user.user_id,
+      tenantName: tenant.name,
+      userFullName: user.name,
+      userEmail: user.email,
     };
 
     return {
@@ -103,185 +107,260 @@ class AuthService {
 
   async signup(payload: SignupPayload) {
     const transaction = await Tenant.sequelize!.transaction();
-    const existingTenant = await Tenant.findOne({
-      where: { email: payload.email },
-    });
+    try {
+      const existingTenant = await Tenant.findOne({
+        where: { email: payload.email },
+        transaction,
+      });
 
-    if (existingTenant) {
-      throw new HttpError(409, "Email already exists");
-    }
+      if (existingTenant) {
+        throw new HttpError(409, "Email already exists");
+      }
 
-    const tenantId = await this.generateTenantId();
-    const password = await argon2.hash(payload.password);
+      const tenantId = await this.generateTenantId();
+      const password = await argon2.hash(payload.password);
 
-    await Tenant.create({
-      tenant_id: tenantId,
-      name: payload.name,
-      email: payload.email,
-    });
+      await Tenant.create(
+        {
+          tenant_id: tenantId,
+          name: payload.name,
+          email: payload.email,
+        },
+        { transaction },
+      );
 
-    const user = await UserModel.create(
-      {
-        tenant_id: tenantId,
-        user_id: crypto.randomUUID(),
-        name: payload.name,
-        email: payload.email,
-        password,
-      },
-      { transaction },
-    );
+      setAsyncStorage({ tenantId });
 
-    if (!user) {
-      throw new HttpError(500, "Failed to create user");
-    }
-    await transaction.commit();
+      const user = await UserModel.create(
+        {
+          tenant_id: tenantId,
+          user_id: crypto.randomUUID(),
+          name: "No name",
+          email: payload.email,
+          password,
+        },
+        { transaction },
+      );
 
-    return {
-      status: ApiResponseStatus.SUCCESS,
-      message: "User created successfully",
-      data: {
-        userId: user.user_id,
+      if (!user) {
+        throw new HttpError(500, "Failed to create user");
+      }
+
+      eventService.emitEventHelper(EventTypes.TENANT_CREATED, {
         tenantId,
-        email: user.email,
-        name: user.name,
-      },
-    };
+        actor: user.user_id,
+        action: EventTypes.TENANT_CREATED,
+        targetEntity: "TenantModel",
+        transaction,
+      });
+
+      await transaction.commit();
+
+      return {
+        status: ApiResponseStatus.SUCCESS,
+        message: "User created successfully",
+      };
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+
+      logger.error("Signup failed", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      throw error;
+    }
   }
 
   async login(payload: LoginPayload) {
     const transaction = await Tenant.sequelize!.transaction();
-    const tenantId = await this.resolveTenantId(
-      payload.email,
-      payload.tenantId,
-    );
+    try {
+      const tenant = await this.resolveTenantId(payload.email);
 
-    const user = await UserModel.findOne({
-      where: { email: payload.email },
-      transaction,
-    });
+      const user = await UserModel.findOne({
+        where: { email: payload.email },
+        transaction,
+      });
 
-    if (!user) {
-      throw new HttpError(403, "Invalid credentials");
+      if (!user) {
+        throw new HttpError(403, "Invalid credentials");
+      }
+
+      const passwordIsValid = await argon2.verify(
+        user.password,
+        payload.password,
+      );
+
+      if (!passwordIsValid) {
+        throw new HttpError(403, "Invalid credentials");
+      }
+
+      const tokens = this.createSessionTokens(user, tenant);
+      await user.update({ refreshToken: tokens.refreshToken }, { transaction });
+      await transaction.commit();
+
+      return {
+        status: ApiResponseStatus.SUCCESS,
+        message: "Login successful",
+        data: tokens,
+      };
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+
+      logger.error("Login failed", {
+        email: payload.email,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      throw error;
     }
-
-    const passwordIsValid = await argon2.verify(
-      user.get("password") as string,
-      payload.password,
-    );
-
-    if (!passwordIsValid) {
-      throw new HttpError(403, "Invalid credentials");
-    }
-
-    const tokens = this.createSessionTokens(user, tenantId);
-    await user.update({ refreshToken: tokens.refreshToken }, { transaction });
-    await transaction.commit();
-
-    return {
-      status: ApiResponseStatus.SUCCESS,
-      message: "Login successful",
-      data: tokens,
-    };
   }
 
   async refresh(payload: RefreshPayload) {
     const transaction = await Tenant.sequelize!.transaction();
-    let tokenPayload: RefreshTokenPayload;
-
     try {
-      tokenPayload = jwt.verify(
-        payload.refreshToken,
-        getRefreshTokenSecret(),
-      ) as RefreshTokenPayload;
-    } catch {
-      throw new HttpError(403, "Invalid refresh token");
+      let tokenPayload: RefreshTokenPayload;
+
+      try {
+        tokenPayload = jwt.verify(
+          payload.refreshToken,
+          getRefreshTokenSecret(),
+        ) as RefreshTokenPayload;
+      } catch {
+        throw new HttpError(403, "Invalid refresh token");
+      }
+
+      const tenant = await Tenant.findByPk(tokenPayload.tenantId, {
+        transaction,
+      });
+
+      if (!tenant) {
+        throw new HttpError(404, "Tenant not found");
+      }
+
+      setAsyncStorage({ tenantId: tenant.tenant_id });
+
+      const user = await UserModel.findByPk(tokenPayload.userId, {
+        transaction,
+      });
+
+      if (!user || user.refreshToken !== payload.refreshToken) {
+        throw new HttpError(403, "Invalid refresh token");
+      }
+
+      const tokens = this.createSessionTokens(user, tenant);
+      await user.update({ refreshToken: tokens.refreshToken }, { transaction });
+      await transaction.commit();
+
+      return {
+        status: ApiResponseStatus.SUCCESS,
+        message: "Token refreshed",
+        data: tokens,
+      };
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+
+      logger.error("Token refresh failed", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      throw error;
     }
-
-    const user = await UserModel.findByPk(tokenPayload.userId, {
-      transaction,
-    });
-
-    if (!user || user.get("refreshToken") !== payload.refreshToken) {
-      throw new HttpError(403, "Invalid refresh token");
-    }
-
-    const tokens = this.createSessionTokens(user, tokenPayload.tenantId);
-    await user.update({ refreshToken: tokens.refreshToken }, { transaction });
-    await transaction.commit();
-
-    return {
-      status: ApiResponseStatus.SUCCESS,
-      message: "Token refreshed",
-      data: tokens,
-    };
   }
 
   async requestPasswordReset(payload: ResetRequestPayload) {
     const transaction = await Tenant.sequelize!.transaction();
-    const tenantId = await this.resolveTenantId(
-      payload.email,
-      payload.tenantId,
-    );
+    try {
+      const tenant = await this.resolveTenantId(payload.email);
 
-    const user = await UserModel.findOne({
-      where: { email: payload.email },
-      transaction,
-    });
+      const user = await UserModel.findOne({
+        where: { email: payload.email },
+        transaction,
+      });
 
-    if (!user) {
-      throw new HttpError(404, "User not found");
+      if (!user) {
+        throw new HttpError(404, "User not found");
+      }
+
+      const resetToken = signPasswordResetJwt({
+        userId: user.user_id,
+        tenantId: tenant.tenant_id,
+      });
+
+      await emailDeliveryService.sendEmail({
+        to: payload.email,
+        subject: "Wellspring password reset",
+        text: `Use this password reset token: ${resetToken}`,
+      });
+
+      await transaction.commit();
+
+      return {
+        status: ApiResponseStatus.SUCCESS,
+        message: "Password reset requested",
+        data: { resetToken },
+      };
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+
+      logger.error("Password reset request failed", {
+        email: payload.email,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      throw error;
     }
-
-    const resetToken = signPasswordResetJwt({
-      userId: user.get("user_id") as string,
-      tenantId,
-    });
-
-    await emailDeliveryService.sendEmail({
-      to: payload.email,
-      subject: "Wellspring password reset",
-      text: `Use this password reset token: ${resetToken}`,
-    });
-
-    await transaction.commit();
-
-    return {
-      status: ApiResponseStatus.SUCCESS,
-      message: "Password reset requested",
-      data: { resetToken },
-    };
   }
 
   async confirmPasswordReset(payload: ResetConfirmPayload) {
     const transaction = await Tenant.sequelize!.transaction();
-    let tokenPayload: PasswordResetPayload;
-
     try {
-      tokenPayload = jwt.verify(
-        payload.resetToken,
-        getPasswordResetSecret(),
-      ) as PasswordResetPayload;
-    } catch {
-      throw new HttpError(403, "Invalid password reset token");
+      let tokenPayload: PasswordResetPayload;
+
+      try {
+        tokenPayload = jwt.verify(
+          payload.resetToken,
+          getPasswordResetSecret(),
+        ) as PasswordResetPayload;
+      } catch {
+        throw new HttpError(403, "Invalid password reset token");
+      }
+
+      const password = await argon2.hash(payload.password);
+      const user = await UserModel.findByPk(tokenPayload.userId, {
+        transaction,
+      });
+
+      if (!user) {
+        throw new HttpError(404, "User not found");
+      }
+
+      await user.update({ password, refreshToken: null }, { transaction });
+      await transaction.commit();
+
+      return {
+        status: ApiResponseStatus.SUCCESS,
+        message: "Password reset successful",
+        data: { message: "Password reset successful" },
+      };
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {}
+
+      logger.error("Password reset confirm failed", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      throw error;
     }
-
-    const password = await argon2.hash(payload.password);
-    const user = await UserModel.findByPk(tokenPayload.userId, {
-      transaction,
-    });
-
-    if (!user) {
-      throw new HttpError(404, "User not found");
-    }
-
-    await user.update({ password, refreshToken: null }, { transaction });
-    await transaction.commit();
-
-    return {
-      status: ApiResponseStatus.SUCCESS,
-      message: "Password reset successful",
-      data: { message: "Password reset successful" },
-    };
   }
 }
 
