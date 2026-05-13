@@ -4,6 +4,7 @@ import BaseModel from "./BaseModel";
 class SessionModel extends BaseModel {
   declare session_id: string;
   declare program_id: string;
+  declare client_key: string;
   declare type: "audio" | "video";
   declare title: string;
   declare duration: number;
@@ -23,6 +24,11 @@ class SessionModel extends BaseModel {
         program_id: {
           type: DataTypes.UUID,
           allowNull: false,
+        },
+        client_key: {
+          type: DataTypes.STRING(255),
+          allowNull: false,
+          unique: true,
         },
         type: {
           type: DataTypes.ENUM("audio", "video"),

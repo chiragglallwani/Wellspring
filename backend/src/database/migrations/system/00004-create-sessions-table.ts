@@ -51,6 +51,11 @@ export const up = async ({ context: queryInterface }: MigrationParams) => {
           primaryKey: true,
           allowNull: false,
         },
+        client_key: {
+          type: DataTypes.STRING(255),
+          allowNull: false,
+          unique: true,
+        },
         program_id: {
           type: DataTypes.UUID,
           allowNull: false,
@@ -109,11 +114,6 @@ export const up = async ({ context: queryInterface }: MigrationParams) => {
       { transaction },
     );
 
-    await queryInterface.addIndex(
-      { tableName, schema },
-      ["tenant_id", "program_id"],
-      { transaction },
-    );
     await addTenantIsolationPolicy(queryInterface, transaction);
   });
 };

@@ -9,6 +9,8 @@ import migrationService from "./services/migration.service.js";
 import databaseService from "./services/database.service.js";
 import eventService from "./events/event.service.js";
 import { asyncStorageMiddleware } from "./utils/asyncstorage.js";
+import routes from "./routes";
+import { errorMiddleware } from "./middlewares/error.middleware";
 
 dotenv.config();
 
@@ -31,10 +33,6 @@ async function intializeDatabase() {
   }
 }
 
-// todo: add the mountServiceRoutes function to have csrf protection, auth middleware checks on all authenticated routes
-
-intializeDatabase();
-eventService.registerHandlers();
 const app = express();
 app.use(asyncStorageMiddleware);
 app.use(helmet());
@@ -62,7 +60,19 @@ const limiter = rateLimit({
   headers: true,
 });
 app.use(limiter);
+app.use("/api", routes);
+app.use(errorMiddleware);
 
-app.listen(process.env.PORT, () => {
-  logger.info(`Server is running on port ${process.env.PORT}`);
-});
+intializeDatabase()
+  .then(() => {
+    eventService.registerHandlers();
+    app.listen(process.env.PORT, () => {
+      logger.info(`Server is running on port ${process.env.PORT}`);
+    });
+  })
+  .catch((error) => {
+    logger.error("Failed to start server", {
+      error: error instanceof Error ? error.message : error,
+    });
+    process.exit(1);
+  });

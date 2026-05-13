@@ -1,5 +1,7 @@
 import { EventEmitter } from "events";
 import logger from "../config/logger.js";
+import programCreateEventHandler from "./handlers/programCreateEventHandler.js";
+import { EventTypes } from "./types/EventTypes.js";
 
 class EventService extends EventEmitter {
   constructor() {
@@ -15,7 +17,7 @@ class EventService extends EventEmitter {
 
   registerHandlers = () => {
     // todo: publish events to the event service such as audit logs, etc.
-    // todo: log the event firing
+    this.on(EventTypes.PROGRAM_CREATED, programCreateEventHandler);
   };
 
   emitEventHelper = (eventName: string, data: Record<string, any>) => {

@@ -88,11 +88,6 @@ export const up = async ({ context: queryInterface }: MigrationParams) => {
       { transaction },
     );
 
-    await queryInterface.addIndex(
-      { tableName, schema },
-      ["tenant_id", "actor"],
-      { transaction },
-    );
     await addTenantIsolationPolicy(queryInterface, transaction);
   });
 };
