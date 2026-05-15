@@ -1,10 +1,6 @@
-import { body, param, query } from "express-validator";
+import { body, param, type ValidationChain } from "express-validator";
 
-export const listSessionsValidator = [
-  query("page").optional().isInt({ min: 1 }).toInt(),
-  query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
-  query("programId").optional().isUUID(),
-];
+export const listSessionsValidator: ValidationChain[] = [];
 
 export const createSessionValidator = [
   body("program_id").isUUID(),
@@ -19,9 +15,7 @@ export const createSessionValidator = [
   body("media_file_path").isString().trim().notEmpty(),
 ];
 
-export const getSessionValidator = [
-  param("sessionId").isUUID(),
-];
+export const getSessionValidator = [param("sessionId").isUUID()];
 
 export const updateSessionValidator = [
   param("sessionId").isUUID(),
@@ -37,9 +31,7 @@ export const updateSessionValidator = [
   body("media_file_path").optional().isString().trim().notEmpty(),
 ];
 
-export const deleteSessionValidator = [
-  param("sessionId").isUUID(),
-];
+export const deleteSessionValidator = [param("sessionId").isUUID()];
 
 export const reorderSessionsValidator = [
   body("sessions").isArray({ min: 1 }),

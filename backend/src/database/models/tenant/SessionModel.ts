@@ -28,7 +28,6 @@ class SessionModel extends BaseModel {
         client_key: {
           type: DataTypes.STRING(255),
           allowNull: false,
-          unique: true,
         },
         type: {
           type: DataTypes.ENUM("audio", "video"),
@@ -63,6 +62,14 @@ class SessionModel extends BaseModel {
         sequelize,
         tableName: "sessions",
         modelName: "SessionModel",
+        indexes: [
+          {
+            name: "sessions_tenant_program_client_key_unique",
+            unique: true,
+            fields: ["tenant_id", "program_id", "client_key"],
+            where: { deletedAt: null },
+          },
+        ],
       },
     );
   }

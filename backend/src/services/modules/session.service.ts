@@ -1,9 +1,12 @@
 import SessionModel from "../../database/models/tenant/SessionModel";
+import ProgramsModel from "../../database/models/tenant/ProgramsModel";
 import { HttpError } from "../../utils/http";
 import { EventTypes } from "../../events/types/EventTypes";
 import eventService from "../../events/event.service";
 import { ApiResponseStatus } from "../../constants/apiResponse";
 import logger from "../../config/logger";
+import s3Service from "../storage/s3.service";
+import clientKeyAvailabilityService from "./clientKeyAvailability.service";
 
 type SessionPayload = {
   program_id: string;
@@ -14,15 +17,8 @@ type SessionPayload = {
   ordered_position: number;
   instructor_name: string;
   tags?: string[];
-  media_file_path: string;
-};
-
-type SessionListParams = {
-  tenantId: string;
-  page: number;
-  limit: number;
-  offset: number;
-  programId?: string;
+  /** S3 storage key from POST /uploads/presign (`key` in response). */
+  media_file_path?: string;
 };
 
 type ReorderSessionPayload = {
@@ -31,6 +27,22 @@ type ReorderSessionPayload = {
 };
 
 class SessionService {
+  private async resolveSessionMediaStorageKey(
+    programId: string,
+    mediaFilePath: string | undefined,
+  ): Promise<string> {
+    const key = mediaFilePath?.trim() ?? "";
+    if (!key) {
+      throw new HttpError(
+        400,
+        "media_file_path is required (use the key from the presign upload response)",
+      );
+    }
+
+    await s3Service.validateSessionMediaObjectKey(programId, key);
+    return key;
+  }
+
   async createSession(
     tenantId: string,
     actor: string,
@@ -40,10 +52,28 @@ class SessionService {
 
     try {
       logger.info("Creating session");
+      await clientKeyAvailabilityService.assertClientKeyAvailable(
+        payload.program_id,
+        payload.client_key,
+      );
+
+      const media_file_path = await this.resolveSessionMediaStorageKey(
+        payload.program_id,
+        payload.media_file_path,
+      );
+
       const session = await SessionModel.create(
         {
           tenant_id: tenantId,
-          ...payload,
+          program_id: payload.program_id,
+          client_key: payload.client_key,
+          type: payload.type,
+          title: payload.title,
+          duration: payload.duration,
+          ordered_position: payload.ordered_position,
+          instructor_name: payload.instructor_name,
+          tags: payload.tags,
+          media_file_path,
         },
         { transaction },
       );
@@ -73,34 +103,49 @@ class SessionService {
     }
   }
 
-  async listSessions(params: SessionListParams) {
-    const transaction = await SessionModel.sequelize!.transaction();
+  async listSessions(_tenantId: string) {
+    const transaction = await ProgramsModel.sequelize!.transaction();
 
     try {
-      logger.info("Fetching sessions");
-      const { rows, count } = await SessionModel.findAndCountAll({
-        where: params.programId ? { program_id: params.programId } : {},
-        order: [["ordered_position", "ASC"]],
-        limit: params.limit,
-        offset: params.offset,
+      logger.info("Fetching sessions grouped by program");
+      const programs = await ProgramsModel.findAll({
+        include: [
+          {
+            model: SessionModel,
+            as: "sessions",
+            required: false,
+            separate: true,
+            order: [["ordered_position", "ASC"]],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
         transaction,
       });
 
       await transaction.commit();
       logger.info("Sessions fetched successfully");
 
+      const data = programs.map((program) => {
+        const p = program.get({ plain: true }) as {
+          program_id: string;
+          name: string;
+          description: string;
+          sessions?: Record<string, unknown>[];
+        };
+        const sessions = p.sessions ?? [];
+        return {
+          program_id: p.program_id,
+          name: p.name,
+          description: p.description,
+          sessionsLength: sessions.length,
+          sessions,
+        };
+      });
+
       return {
         status: ApiResponseStatus.SUCCESS,
         message: "Sessions fetched successfully",
-        data: {
-          items: rows,
-          pagination: {
-            page: params.page,
-            limit: params.limit,
-            total: count,
-            totalPages: Math.ceil(count / params.limit),
-          },
-        },
+        data: { programs: data },
       };
     } catch (error) {
       await transaction.rollback();
@@ -155,7 +200,30 @@ class SessionService {
         throw new HttpError(404, "Session not found");
       }
 
-      await session.update(payload, { transaction });
+      const updateData: Record<string, unknown> = { ...payload };
+
+      if (
+        payload.client_key !== undefined &&
+        payload.client_key.trim() !== session.client_key
+      ) {
+        await clientKeyAvailabilityService.assertClientKeyAvailable(
+          session.program_id,
+          payload.client_key,
+          { excludeSessionId: session.session_id },
+        );
+      }
+
+      if (
+        payload.media_file_path !== undefined &&
+        payload.media_file_path.trim() !== ""
+      ) {
+        updateData.media_file_path = await this.resolveSessionMediaStorageKey(
+          session.program_id,
+          payload.media_file_path,
+        );
+      }
+
+      await session.update(updateData, { transaction });
       await transaction.commit();
       logger.info("Session updated successfully");
 
@@ -184,7 +252,23 @@ class SessionService {
         throw new HttpError(404, "Session not found");
       }
 
+      const programId = session.program_id;
+
       await session.destroy({ transaction });
+
+      const remaining = await SessionModel.findAll({
+        where: { program_id: programId },
+        order: [["ordered_position", "ASC"]],
+        transaction,
+      });
+
+      let positionsChanged = false;
+      for (const [index, row] of remaining.entries()) {
+        if (row.ordered_position !== index) {
+          await row.update({ ordered_position: index }, { transaction });
+          positionsChanged = true;
+        }
+      }
 
       eventService.emitEventHelper(EventTypes.SESSION_DELETED, {
         tenantId,
@@ -194,13 +278,23 @@ class SessionService {
         transaction,
       });
 
+      if (positionsChanged) {
+        eventService.emitEventHelper(EventTypes.SESSION_REORDERED, {
+          tenantId,
+          actor,
+          action: EventTypes.SESSION_REORDERED,
+          targetEntity: "SessionModel",
+          transaction,
+        });
+      }
+
       await transaction.commit();
       logger.info("Session deleted successfully");
 
       return {
         status: ApiResponseStatus.SUCCESS,
         message: "Session deleted successfully",
-        data: { message: "Session deleted" },
+        data: { message: "Session deleted", program_id: programId },
       };
     } catch (error) {
       await transaction.rollback();

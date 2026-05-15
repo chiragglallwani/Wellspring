@@ -3,6 +3,8 @@ import jwt from "jsonwebtoken";
 import { ApiResponseStatus } from "../constants/apiResponse";
 import { setAsyncStorage } from "../utils/asyncstorage";
 import { getJwtSecret } from "../utils/token";
+import UserModel from "../database/models/tenant/UserModel";
+import logger from "../config/logger";
 
 export type JwtUserPayload = {
   userId: string;
@@ -11,48 +13,70 @@ export type JwtUserPayload = {
   userEmail: string;
 };
 
-export const authMiddleware = (
+function sendUnauthorized(res: Response, message: string) {
+  return res.status(401).json({
+    status: ApiResponseStatus.UNAUTHORIZED,
+    message,
+    error: null,
+  });
+}
+
+export const authMiddleware = async (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  const authorizationHeader = req.headers.authorization;
-  const token = authorizationHeader?.startsWith("Bearer ")
-    ? authorizationHeader.slice("Bearer ".length)
+  const authorizationHeader = req.get("Authorization") ?? "";
+  const token = authorizationHeader.startsWith("Bearer ")
+    ? authorizationHeader.slice("Bearer ".length).trim()
     : undefined;
 
   if (!token) {
-    return res.status(403).json({
-      status: ApiResponseStatus.UNAUTHORIZED,
-      message: "Authorization bearer token is required",
-      error: null,
-    });
+    return sendUnauthorized(res, "Please sign in to continue.");
   }
 
   try {
     const payload = jwt.verify(token, getJwtSecret()) as JwtUserPayload;
 
     if (!payload.tenantId) {
-      return res.status(403).json({
-        status: ApiResponseStatus.UNAUTHORIZED,
-        message: "Tenant ID is missing from token",
-        error: null,
-      });
+      return sendUnauthorized(
+        res,
+        "Your session is invalid. Please sign in again.",
+      );
+    }
+    setAsyncStorage({ tenantId: payload.tenantId });
+
+    const user = await UserModel.findOne({
+      where: { user_id: payload.userId },
+    });
+    if (!user) {
+      return sendUnauthorized(
+        res,
+        "Your account could not be found. Please sign in again.",
+      );
     }
 
-    req.user = payload;
-    setAsyncStorage({ tenantId: payload.tenantId, user: payload }); // todo: remove user from async storage
+    logger.info("User found for tenant", { tenantId: payload.tenantId });
+
+    req.user = {
+      userId: user.user_id,
+      tenantId: payload.tenantId,
+      userFullName: user.name,
+      userEmail: user.email,
+    };
+    setAsyncStorage({ tenantId: payload.tenantId, user });
     return next();
   } catch (error) {
-    const message =
-      error instanceof jwt.TokenExpiredError
-        ? "Token expired"
-        : "Invalid authorization token";
+    if (error instanceof jwt.TokenExpiredError) {
+      return sendUnauthorized(
+        res,
+        "Your session has expired. Please sign in again.",
+      );
+    }
 
-    return res.status(403).json({
-      status: ApiResponseStatus.UNAUTHORIZED,
-      message,
-      error: null,
-    });
+    return sendUnauthorized(
+      res,
+      "Your session is invalid. Please sign in again.",
+    );
   }
 };

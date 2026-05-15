@@ -5,8 +5,11 @@ services:
     command: npm run dev
     env_file:
       - .env.local
+    environment:
+      # Must be reachable from the host browser (not the Docker network hostname).
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
     ports:
-      - "3000:3000"
+      - "4443:4443"
     volumes:
       - .:/app
       - backend_node_modules:/app/node_modules
@@ -14,6 +17,8 @@ services:
       postgres:
         condition: service_healthy
       mailhog:
+        condition: service_started
+      minio:
         condition: service_started
 
   postgres:
@@ -38,6 +43,21 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+      # Allow browser uploads via presigned URLs from the Next.js dev server
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3000"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
 volumes:
   backend_node_modules:
   postgres_data:
+  minio_data:
