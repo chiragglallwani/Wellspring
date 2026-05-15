@@ -51,6 +51,23 @@ function setRequestHeader(
   config.headers = headers;
 }
 
+function clearRequestHeader(config: InternalAxiosRequestConfig, name: string) {
+  const headers = config.headers ?? {};
+  if (typeof headers.delete === "function") {
+    headers.delete(name);
+  } else {
+    delete (headers as Record<string, string>)[name];
+  }
+  config.headers = headers;
+}
+
+/** Let the browser set multipart boundary; default JSON Content-Type breaks multer. */
+function applyMultipartHeaders(config: InternalAxiosRequestConfig) {
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+    clearRequestHeader(config, "Content-Type");
+  }
+}
+
 function attachAuthHeaders(config: InternalAxiosRequestConfig) {
   const url = typeof config.url === "string" ? config.url : "";
   if (isPublicAuthPath(url)) return;
@@ -67,6 +84,7 @@ function attachAuthHeaders(config: InternalAxiosRequestConfig) {
 }
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  applyMultipartHeaders(config);
   attachAuthHeaders(config);
   return config;
 });

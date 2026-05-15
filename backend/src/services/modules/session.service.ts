@@ -6,6 +6,7 @@ import eventService from "../../events/event.service";
 import { ApiResponseStatus } from "../../constants/apiResponse";
 import logger from "../../config/logger";
 import s3Service from "../storage/s3.service";
+import clientKeyAvailabilityService from "./clientKeyAvailability.service";
 
 type SessionPayload = {
   program_id: string;
@@ -16,9 +17,7 @@ type SessionPayload = {
   ordered_position: number;
   instructor_name: string;
   tags?: string[];
-  /** S3 object key returned from POST /uploads/presign (`key`). */
-  object_key?: string;
-  /** Same value as object_key; use one or the other. Validated against tenant/program and HeadObject. */
+  /** S3 storage key from POST /uploads/presign (`key` in response). */
   media_file_path?: string;
 };
 
@@ -29,28 +28,14 @@ type ReorderSessionPayload = {
 
 class SessionService {
   private async resolveSessionMediaStorageKey(
-    tenantId: string,
     programId: string,
-    payload: Pick<SessionPayload, "object_key" | "media_file_path">,
+    mediaFilePath: string | undefined,
   ): Promise<string> {
-    const fromObjectKey =
-      payload.object_key !== undefined ? payload.object_key.trim() : "";
-    const fromPath =
-      payload.media_file_path !== undefined
-        ? payload.media_file_path.trim()
-        : "";
-
-    const key = fromObjectKey || fromPath;
+    const key = mediaFilePath?.trim() ?? "";
     if (!key) {
       throw new HttpError(
         400,
-        "Provide object_key from the presign response or media_file_path with the same storage key",
-      );
-    }
-    if (fromObjectKey && fromPath && fromObjectKey !== fromPath) {
-      throw new HttpError(
-        400,
-        "object_key and media_file_path must match when both are provided",
+        "media_file_path is required (use the key from the presign upload response)",
       );
     }
 
@@ -67,10 +52,14 @@ class SessionService {
 
     try {
       logger.info("Creating session");
-      const media_file_path = await this.resolveSessionMediaStorageKey(
-        tenantId,
+      await clientKeyAvailabilityService.assertClientKeyAvailable(
         payload.program_id,
-        payload,
+        payload.client_key,
+      );
+
+      const media_file_path = await this.resolveSessionMediaStorageKey(
+        payload.program_id,
+        payload.media_file_path,
       );
 
       const session = await SessionModel.create(
@@ -212,32 +201,26 @@ class SessionService {
       }
 
       const updateData: Record<string, unknown> = { ...payload };
-      delete updateData.object_key;
 
-      const hasOkObjectKey =
-        payload.object_key !== undefined &&
-        payload.object_key.trim() !== "";
-      const hasOkMediaPath =
-        payload.media_file_path !== undefined &&
-        payload.media_file_path.trim() !== "";
-
-      if (hasOkObjectKey || hasOkMediaPath) {
-        const mediaPayload: Pick<
-          SessionPayload,
-          "object_key" | "media_file_path"
-        > = {};
-        if (hasOkObjectKey && payload.object_key) {
-          mediaPayload.object_key = payload.object_key.trim();
-        }
-        if (hasOkMediaPath && payload.media_file_path) {
-          mediaPayload.media_file_path = payload.media_file_path.trim();
-        }
-        const mediaPath = await this.resolveSessionMediaStorageKey(
-          tenantId,
+      if (
+        payload.client_key !== undefined &&
+        payload.client_key.trim() !== session.client_key
+      ) {
+        await clientKeyAvailabilityService.assertClientKeyAvailable(
           session.program_id,
-          mediaPayload,
+          payload.client_key,
+          { excludeSessionId: session.session_id },
         );
-        updateData.media_file_path = mediaPath;
+      }
+
+      if (
+        payload.media_file_path !== undefined &&
+        payload.media_file_path.trim() !== ""
+      ) {
+        updateData.media_file_path = await this.resolveSessionMediaStorageKey(
+          session.program_id,
+          payload.media_file_path,
+        );
       }
 
       await session.update(updateData, { transaction });

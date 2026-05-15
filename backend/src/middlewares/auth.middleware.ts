@@ -56,7 +56,7 @@ export const authMiddleware = async (
       );
     }
 
-    logger.info("User found", { tokenPayload: payload, user });
+    logger.info("User found for tenant", { tenantId: payload.tenantId });
 
     req.user = {
       userId: user.user_id,

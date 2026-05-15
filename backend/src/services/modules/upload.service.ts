@@ -1,19 +1,19 @@
 import path from "path";
 import { parse } from "csv-parse/sync";
-import { UniqueConstraintError } from "sequelize";
 import SessionModel from "../../database/models/tenant/SessionModel";
 import ProgramsModel from "../../database/models/tenant/ProgramsModel";
-import Tenant from "../../database/models/system/Tenant";
 import { ApiResponseStatus } from "../../constants/apiResponse";
 import { HttpError } from "../../utils/http";
 import { getTenantId } from "../../utils/asyncstorage";
 import logger from "../../config/logger";
 import s3Service from "../storage/s3.service";
+import clientKeyAvailabilityService from "./clientKeyAvailability.service";
 
 type PresignSingleParams = {
   programId: string;
   filename: string;
   contentType?: string;
+  clientKey?: string;
 };
 
 type MediaPlaybackParams = {
@@ -21,7 +21,7 @@ type MediaPlaybackParams = {
   filename: string;
 };
 
-type BulkCsvRowFailure = {
+export type BulkCsvRowFailure = {
   rowNumber: number;
   reason: string;
   client_key?: string;
@@ -29,7 +29,44 @@ type BulkCsvRowFailure = {
   file_name?: string;
 };
 
+export type BulkCsvImportResult = {
+  processed: number;
+  failed: number;
+  skipped: number;
+  failures: BulkCsvRowFailure[];
+  totalRows: number;
+};
+
+type BulkCsvProgress = {
+  totalRows: number;
+  processed: number;
+  failed: number;
+  skipped: number;
+};
+
 class UploadService {
+  /** Returns client_keys that already have a session in this tenant + program. */
+  async findExistingClientKeys(programId: string, clientKeys: string[]) {
+    const tenantId = getTenantId();
+    const existing = await clientKeyAvailabilityService.findTakenClientKeys(
+      programId,
+      clientKeys,
+    );
+
+    logger.debug("Bulk upload existing client_key check", {
+      tenantId,
+      programId,
+      requested: clientKeys.length,
+      existing: existing.length,
+    });
+
+    return {
+      status: ApiResponseStatus.SUCCESS,
+      message: "Existing client keys",
+      data: { existing },
+    };
+  }
+
   async getPresignedUploadForSession(params: PresignSingleParams) {
     const tenantId = getTenantId();
     logger.info("Presigned session upload requested", {
@@ -39,6 +76,19 @@ class UploadService {
       hasContentType: Boolean(params.contentType),
     });
 
+    const clientKey = params.clientKey?.trim();
+    if (clientKey) {
+      await clientKeyAvailabilityService.assertClientKeyAvailable(
+        params.programId,
+        clientKey,
+      );
+    }
+
+    const storageFilename = this.storageFilenameForUpload(
+      params.filename,
+      clientKey,
+    );
+
     const putOptions =
       params.contentType !== undefined && params.contentType !== ""
         ? { contentType: params.contentType }
@@ -46,7 +96,7 @@ class UploadService {
 
     const { url, key, expiresIn } = await s3Service.getPresignedPutUrl(
       params.programId,
-      params.filename,
+      storageFilename,
       putOptions,
     );
 
@@ -100,14 +150,18 @@ class UploadService {
   }
 
   /**
-   * CSV: first row is headers. Columns (case-insensitive): title, duration,
-   * ordered_position, instructor_name, tags (comma-separated), and either
-   * file_name (basename used to build the storage key) or object_key (full key from presign).
-   * Do not send media_file_path in CSV; the storage key is resolved and stored in DB as media_file_path.
-   * client_key is `{tenant_name}/{program_name}/{title}`.
-   * Idempotent: upserts by client_key + program. Verifies the object exists in S3/MinIO.
+   * CSV headers (case-insensitive): client_key, type, title, duration, instructor_name,
+   * optional tags, optional ordered_position.
+   * Creates sessions for new client_keys only; existing (tenant, program, client_key) rows are skipped.
+   * Media must already be uploaded under the program (storage path derived from client_key).
    */
-  async bulkLinkSessionMediaFromCsv(programId: string, csvBuffer: Buffer) {
+  async bulkLinkSessionMediaFromCsv(
+    programId: string,
+    csvBuffer: Buffer,
+    options?: {
+      onProgress?: (progress: BulkCsvProgress) => void | Promise<void>;
+    },
+  ): Promise<BulkCsvImportResult> {
     let records: Record<string, string>[];
     try {
       records = parse(csvBuffer, {
@@ -131,15 +185,6 @@ class UploadService {
       dataRowCount: records.length,
     });
 
-    const tenant = await Tenant.findByPk(tenantId);
-    if (!tenant) {
-      logger.warn("Bulk session CSV import aborted: tenant not found", {
-        tenantId,
-        programId,
-      });
-      throw new HttpError(404, "Tenant not found");
-    }
-
     const program = await ProgramsModel.findOne({
       where: { program_id: programId },
     });
@@ -151,16 +196,41 @@ class UploadService {
       throw new HttpError(404, "Program not found");
     }
 
-    const tenantName = tenant.name.trim();
-    const programName = program.name.trim();
-
     const failures: BulkCsvRowFailure[] = [];
     let processed = 0;
+    let skipped = 0;
     let rowNumber = 1;
+    const totalRows = records.length;
 
-    for (const row of records) {
+    const csvClientKeys = records
+      .map((row) => this.pickColumn(row, ["client_key", "clientkey"])?.trim())
+      .filter((key): key is string => Boolean(key));
+    const existingClientKeys = new Set(
+      await clientKeyAvailabilityService.findTakenClientKeys(
+        programId,
+        csvClientKeys,
+      ),
+    );
+
+    const reportProgress = async () => {
+      if (options?.onProgress) {
+        await options.onProgress({
+          totalRows,
+          processed,
+          failed: failures.length,
+          skipped,
+        });
+      }
+    };
+
+    await reportProgress();
+
+    for (let index = 0; index < records.length; index++) {
+      const row = records[index]!;
       rowNumber += 1;
 
+      const clientKey = this.pickColumn(row, ["client_key", "clientkey"]);
+      const typeRaw = this.pickColumn(row, ["type"]);
       const title = this.pickColumn(row, ["title"]);
       const durationRaw = this.pickColumn(row, ["duration"]);
       const orderedRaw = this.pickColumn(row, [
@@ -172,65 +242,22 @@ class UploadService {
         "instructorname",
       ]);
       const tagsRaw = this.pickColumn(row, ["tags"]);
-      const fileName = this.pickColumn(row, ["file_name", "filename"]);
-      const objectKeyFromCsv = this.pickColumn(row, [
-        "object_key",
-        "objectkey",
-        "storage_key",
-        "s3_key",
-      ]);
 
       if (
+        !clientKey ||
+        !typeRaw ||
         !title ||
         durationRaw === undefined ||
-        orderedRaw === undefined ||
-        !instructorName ||
-        (!fileName && !objectKeyFromCsv)
+        !instructorName
       ) {
         failures.push({
           rowNumber,
           reason:
-            "Missing required column (title, duration, ordered_position, instructor_name, and either file_name or object_key); tags is optional",
+            "Missing required column (client_key, type, title, duration, instructor_name); tags and ordered_position are optional",
+          ...(clientKey ? { client_key: clientKey } : {}),
           ...(title ? { title } : {}),
-          ...(fileName ? { file_name: fileName } : {}),
         });
-        logger.warn("Bulk CSV row skipped: missing required columns", {
-          tenantId,
-          programId,
-          rowNumber,
-          title: title ?? null,
-          file_name: fileName ?? null,
-          object_key: objectKeyFromCsv ?? null,
-        });
-        continue;
-      }
-
-      let clientKey: string;
-      try {
-        clientKey = this.buildSessionClientKey(
-          tenantName,
-          programName,
-          title,
-        );
-      } catch (error) {
-        failures.push({
-          rowNumber,
-          reason:
-            error instanceof HttpError
-              ? error.message
-              : "Invalid client_key segments",
-          title,
-          ...(fileName ? { file_name: fileName } : {}),
-        });
-        logger.warn("Bulk CSV row skipped: invalid client_key segments", {
-          tenantId,
-          programId,
-          rowNumber,
-          title,
-          file_name: fileName,
-          detail:
-            error instanceof HttpError ? error.message : "Invalid client_key",
-        });
+        await reportProgress();
         continue;
       }
 
@@ -240,21 +267,40 @@ class UploadService {
           reason: "client_key exceeds 255 characters",
           client_key: clientKey,
           title,
-          ...(fileName ? { file_name: fileName } : {}),
         });
-        logger.warn("Bulk CSV row skipped: client_key too long", {
+        await reportProgress();
+        continue;
+      }
+
+      if (existingClientKeys.has(clientKey)) {
+        skipped += 1;
+        logger.debug("Bulk CSV row skipped: session already exists", {
           tenantId,
           programId,
           rowNumber,
-          clientKeyLength: clientKey.length,
-          title,
-          file_name: fileName,
+          client_key: clientKey,
         });
+        await reportProgress();
+        continue;
+      }
+
+      const sessionType = typeRaw.trim().toLowerCase();
+      if (sessionType !== "audio" && sessionType !== "video") {
+        failures.push({
+          rowNumber,
+          reason: "type must be audio or video",
+          client_key: clientKey,
+          title,
+        });
+        await reportProgress();
         continue;
       }
 
       const duration = Number(durationRaw);
-      const orderedPosition = Number(orderedRaw);
+      const orderedPosition =
+        orderedRaw !== undefined && orderedRaw !== ""
+          ? Number(orderedRaw)
+          : index;
       if (
         !Number.isInteger(duration) ||
         duration < 1 ||
@@ -264,67 +310,35 @@ class UploadService {
         failures.push({
           rowNumber,
           reason:
-            "duration must be a positive integer and ordered_position a non-negative integer",
+            "duration must be a positive integer; ordered_position must be a non-negative integer when provided",
           client_key: clientKey,
           title,
-          ...(fileName ? { file_name: fileName } : {}),
         });
-        logger.warn("Bulk CSV row skipped: invalid duration or ordered_position", {
-          tenantId,
-          programId,
-          rowNumber,
-          client_key: clientKey,
-          durationRaw,
-          orderedRaw,
-        });
+        await reportProgress();
         continue;
       }
 
       const tags = this.parseTagsFromCsv(tagsRaw);
 
-      let objectKey: string;
+      let mediaFilePath: string;
       try {
-        if (objectKeyFromCsv?.trim()) {
-          objectKey = objectKeyFromCsv.trim();
-        } else if (fileName) {
-          objectKey = s3Service.buildSessionObjectKey(programId, fileName);
-        } else {
-          failures.push({
-            rowNumber,
-            reason: "Provide file_name or object_key",
-            client_key: clientKey,
-            title,
-          });
-          continue;
-        }
-        await s3Service.validateSessionMediaObjectKey(programId, objectKey);
+        mediaFilePath = await this.resolveMediaPathForClientKey(
+          programId,
+          clientKey,
+        );
       } catch (error) {
         failures.push({
           rowNumber,
           reason:
             error instanceof HttpError
               ? error.message
-              : "Invalid or missing storage object",
+              : "No uploaded media found for client_key",
           client_key: clientKey,
           title,
-          ...(fileName ? { file_name: fileName } : {}),
         });
-        logger.warn("Bulk CSV row skipped: storage key validation failed", {
-          tenantId,
-          programId,
-          rowNumber,
-          client_key: clientKey,
-          title,
-          file_name: fileName,
-          object_key: objectKeyFromCsv ?? null,
-          detail:
-            error instanceof HttpError ? error.message : "Unknown error",
-        });
+        await reportProgress();
         continue;
       }
-
-      const nameForType = fileName ?? path.posix.basename(objectKey);
-      const sessionType = this.inferSessionTypeFromFileName(nameForType);
 
       const payload = {
         title,
@@ -332,29 +346,11 @@ class UploadService {
         ordered_position: orderedPosition,
         instructor_name: instructorName,
         tags,
-        media_file_path: objectKey,
-        type: sessionType,
+        media_file_path: mediaFilePath,
+        type: sessionType as "audio" | "video",
       };
 
       try {
-        const existing = await SessionModel.findOne({
-          where: { client_key: clientKey, program_id: programId },
-        });
-
-        if (existing) {
-          await existing.update(payload);
-          processed += 1;
-          logger.debug("Bulk CSV row updated existing session", {
-            tenantId,
-            programId,
-            rowNumber,
-            client_key: clientKey,
-            session_id: existing.session_id,
-            objectKey,
-          });
-          continue;
-        }
-
         await SessionModel.create({
           tenant_id: tenantId,
           program_id: programId,
@@ -362,37 +358,7 @@ class UploadService {
           ...payload,
         });
         processed += 1;
-        logger.debug("Bulk CSV row created session", {
-          tenantId,
-          programId,
-          rowNumber,
-          client_key: clientKey,
-          objectKey,
-        });
       } catch (error) {
-        if (error instanceof UniqueConstraintError) {
-          logger.warn("Bulk CSV create hit unique constraint, retrying as update", {
-            tenantId,
-            programId,
-            rowNumber,
-            client_key: clientKey,
-          });
-          const retry = await SessionModel.findOne({
-            where: { client_key: clientKey, program_id: programId },
-          });
-          if (retry) {
-            await retry.update(payload);
-            processed += 1;
-            logger.info("Bulk CSV row recovered after unique constraint", {
-              tenantId,
-              programId,
-              rowNumber,
-              client_key: clientKey,
-              session_id: retry.session_id,
-            });
-            continue;
-          }
-        }
         logger.error("Bulk session CSV row failed", {
           tenantId,
           programId,
@@ -405,15 +371,17 @@ class UploadService {
           reason: "Database create/update failed",
           client_key: clientKey,
           title,
-          ...(fileName ? { file_name: fileName } : {}),
         });
       }
+
+      await reportProgress();
     }
 
     const logPayload = {
       tenantId,
       programId,
       processed,
+      skipped,
       failed: failures.length,
       ...(failures.length > 0
         ? {
@@ -424,18 +392,39 @@ class UploadService {
     };
 
     if (failures.length > 0) {
-      logger.warn("Bulk session CSV import completed with row failures", logPayload);
+      logger.warn(
+        "Bulk session CSV import completed with row failures",
+        logPayload,
+      );
     } else {
       logger.info("Bulk session CSV import completed successfully", logPayload);
     }
 
+    const result: BulkCsvImportResult = {
+      processed,
+      skipped,
+      failed: failures.length,
+      failures,
+      totalRows,
+    };
+
+    return result;
+  }
+
+  /** Wraps bulk import for synchronous HTTP responses. */
+  async bulkLinkSessionMediaFromCsvResponse(
+    programId: string,
+    csvBuffer: Buffer,
+  ) {
+    const result = await this.bulkLinkSessionMediaFromCsv(programId, csvBuffer);
     return {
       status: ApiResponseStatus.SUCCESS,
       message: "Bulk session import completed",
       data: {
-        processed,
-        failed: failures.length,
-        failures,
+        processed: result.processed,
+        skipped: result.skipped,
+        failed: result.failed,
+        failures: result.failures,
       },
     };
   }
@@ -452,7 +441,10 @@ class UploadService {
     const p = programName.trim();
     const s = sessionTitle.trim();
     if (!t || !p || !s) {
-      throw new HttpError(400, "Tenant name, program name, and title must be non-empty");
+      throw new HttpError(
+        400,
+        "Tenant name, program name, and title must be non-empty",
+      );
     }
     if (t.includes("/") || p.includes("/") || s.includes("/")) {
       throw new HttpError(
@@ -461,6 +453,64 @@ class UploadService {
       );
     }
     return `${t}/${p}/${s}`;
+  }
+
+  /** Presign/upload storage basename: client_key + original extension when client_key is set. */
+  private storageFilenameForUpload(
+    originalFilename: string,
+    clientKey?: string,
+  ): string {
+    if (!clientKey?.trim()) {
+      return originalFilename;
+    }
+    const ext = path.extname(originalFilename);
+    const base = clientKey.trim();
+    if (ext && !base.toLowerCase().endsWith(ext.toLowerCase())) {
+      return `${base}${ext}`;
+    }
+    return base;
+  }
+
+  /** Locate uploaded media for a client_key under tenants/.../programs/.../sessions/. */
+  private async resolveMediaPathForClientKey(
+    programId: string,
+    clientKey: string,
+  ): Promise<string> {
+    const trimmed = clientKey.trim();
+    const ext = path.extname(trimmed);
+    const filenames = [trimmed];
+    if (!ext) {
+      for (const suffix of [
+        ".mp4",
+        ".mp3",
+        ".m4a",
+        ".wav",
+        ".webm",
+        ".mov",
+        ".aac",
+      ]) {
+        filenames.push(`${trimmed}${suffix}`);
+      }
+    }
+
+    for (const filename of filenames) {
+      try {
+        const key = s3Service.buildSessionObjectKey(programId, filename);
+        if (await s3Service.objectExists(key)) {
+          await s3Service.validateSessionMediaObjectKey(programId, key);
+          return key;
+        }
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+      }
+    }
+
+    throw new HttpError(
+      400,
+      `No uploaded media found for client_key "${trimmed}" in this program`,
+    );
   }
 
   private parseTagsFromCsv(raw: string | undefined): string[] {
@@ -493,7 +543,10 @@ class UploadService {
     keys: string[],
   ): string | undefined {
     const normalized = Object.fromEntries(
-      Object.entries(row).map(([k, v]) => [k.toLowerCase().replace(/\s+/g, ""), v]),
+      Object.entries(row).map(([k, v]) => [
+        k.toLowerCase().replace(/\s+/g, ""),
+        v,
+      ]),
     );
     for (const key of keys) {
       const value = normalized[key.toLowerCase()];

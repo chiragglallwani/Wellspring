@@ -5,6 +5,7 @@ import SessionCreateEventHandler from "./handlers/SessionCreateEventHandler";
 import SessionDeletedEventHandler from "./handlers/SessionDeletedEventHandler";
 import SessionReorderEventHandler from "./handlers/SessionReorderEventHandler";
 import TenantCreateEventHandler from "./handlers/TenantCreateEventHandler";
+import BulkSessionCreatedEventHandler from "./handlers/BulkSessionCreatedEventHandler";
 import { EventTypes } from "./types/EventTypes.js";
 
 class EventService extends EventEmitter {
@@ -26,6 +27,7 @@ class EventService extends EventEmitter {
     this.on(EventTypes.SESSION_DELETED, SessionDeletedEventHandler);
     this.on(EventTypes.SESSION_REORDERED, SessionReorderEventHandler);
     this.on(EventTypes.TENANT_CREATED, TenantCreateEventHandler);
+    this.on(EventTypes.BULK_SESSION_CREATED, BulkSessionCreatedEventHandler);
   };
 
   emitEventHelper = (eventName: string, data: Record<string, any>) => {

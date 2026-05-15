@@ -12,7 +12,6 @@ const getSessionPayload = (req: Request) => {
     instructor_name,
     tags,
     media_file_path,
-    object_key,
   } = req.body;
 
   return {
@@ -25,7 +24,6 @@ const getSessionPayload = (req: Request) => {
     instructor_name,
     tags,
     media_file_path,
-    object_key,
   };
 };
 

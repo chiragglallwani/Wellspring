@@ -42,7 +42,7 @@ const defaultCreateValues: SessionFormValues = {
   instructor_name: "",
   client_key: "",
   tags: "",
-  object_key: "",
+  media_file_path: "",
 };
 
 export type SessionSheetState =
@@ -73,6 +73,10 @@ function parseTagsInput(raw?: string): string[] | undefined {
     .map((tag) => tag.trim())
     .filter(Boolean);
   return tags.length > 0 ? tags : undefined;
+}
+
+function defaultClientKey(file: File): string {
+  return file.name.replace(/\.[^/.]+$/, "") || file.name;
 }
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogv", "mkv"]);
@@ -195,7 +199,9 @@ export function SessionSheet({
   const selectedMediaType = isCreate
     ? createForm.watch("type")
     : (editSession?.type ?? "video");
-  const objectKey = isCreate ? createForm.watch("object_key") : undefined;
+  const mediaFilePath = isCreate
+    ? createForm.watch("media_file_path")
+    : undefined;
   const createErrors = createForm.formState.errors;
   const editErrors = editForm.formState.errors;
   const isSubmitting = isEdit
@@ -227,7 +233,7 @@ export function SessionSheet({
     if (!isCreate || !open) return;
     queueMicrotask(() => {
       setMediaFileName(null);
-      createForm.setValue("object_key", "", { shouldValidate: false });
+      createForm.setValue("media_file_path", "", { shouldValidate: false });
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -236,7 +242,7 @@ export function SessionSheet({
 
   const clearCreateMediaSelection = () => {
     setMediaFileName(null);
-    createForm.setValue("object_key", "", { shouldValidate: true });
+    createForm.setValue("media_file_path", "", { shouldValidate: true });
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -258,7 +264,7 @@ export function SessionSheet({
 
     setMediaUploading(true);
     setMediaFileName(file.name);
-    createForm.setValue("object_key", "", { shouldValidate: true });
+    createForm.setValue("media_file_path", "", { shouldValidate: true });
 
     let durationSeconds: number | undefined;
     try {
@@ -270,9 +276,12 @@ export function SessionSheet({
     }
 
     try {
+      const clientKey =
+        createForm.getValues("client_key")?.trim() || defaultClientKey(file);
       const presignRes = await uploadsApi.presign({
         program_id: state.programId,
         filename: file.name,
+        client_key: clientKey,
         contentType: file.type || undefined,
       });
       const { presignedUploadUrl, key } = presignRes.data.data;
@@ -287,7 +296,7 @@ export function SessionSheet({
         throw new Error("Failed to upload media file");
       }
 
-      createForm.setValue("object_key", key, { shouldValidate: true });
+      createForm.setValue("media_file_path", key, { shouldValidate: true });
       createForm.setValue("client_key", file.name, { shouldValidate: true });
       if (durationSeconds !== undefined) {
         createForm.setValue("duration", durationSeconds, {
@@ -301,7 +310,7 @@ export function SessionSheet({
       );
     } catch (error) {
       setMediaFileName(null);
-      createForm.setValue("object_key", "", { shouldValidate: true });
+      createForm.setValue("media_file_path", "", { shouldValidate: true });
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -326,7 +335,7 @@ export function SessionSheet({
         duration: values.duration,
         ordered_position: state.orderedPosition,
         instructor_name: values.instructor_name,
-        object_key: values.object_key,
+        media_file_path: values.media_file_path,
         ...(tags ? { tags } : {}),
       });
 
@@ -571,14 +580,14 @@ export function SessionSheet({
                   onClick={() => fileInputRef.current?.click()}
                   className={cn(
                     "flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border bg-muted/5 p-10 transition-all hover:border-primary/50 hover:bg-primary/5",
-                    createErrors.object_key && "border-destructive",
-                    objectKey && "border-primary/40 bg-primary/5",
+                    createErrors.media_file_path && "border-destructive",
+                    mediaFilePath && "border-primary/40 bg-primary/5",
                   )}
                 >
                   <UploadCloud
                     className={cn(
                       "h-10 w-10 text-muted-foreground",
-                      objectKey && "text-primary",
+                      mediaFilePath && "text-primary",
                     )}
                   />
                   <div className="text-center">
@@ -597,9 +606,9 @@ export function SessionSheet({
                     </p>
                   </div>
                 </button>
-                {createErrors.object_key && (
+                {createErrors.media_file_path && (
                   <p className="text-xs text-destructive">
-                    {createErrors.object_key.message}
+                    {createErrors.media_file_path.message}
                   </p>
                 )}
               </div>

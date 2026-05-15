@@ -54,8 +54,7 @@ export type CreateSessionBody = {
   ordered_position: number;
   instructor_name: string;
   tags?: string[];
-  media_file_path?: string;
-  object_key?: string;
+  media_file_path: string;
 };
 
 export type ReorderSessionsBody = {

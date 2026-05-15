@@ -25,7 +25,7 @@ export function Header() {
 
   const displayName = mounted ? (user?.name ?? "—") : "—";
   const displayTenant = mounted ? user?.tenantName : undefined;
-  const displayInitials = mounted ? (initials || "?") : "?";
+  const displayInitials = mounted ? initials || "?" : "?";
 
   return (
     <header className="sticky top-0 w-full h-16 z-40 bg-background/80 backdrop-blur-sm border-b border-border ml-[280px] max-w-[calc(100%-280px)]">
@@ -33,7 +33,7 @@ export function Header() {
         <div className="flex items-center gap-4 flex-1" />
 
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 pr-4 border-r border-border">
+          <div className="flex items-center gap-3 border-border">
             <div className="text-right">
               <p className="text-sm font-bold text-foreground">{displayName}</p>
               {displayTenant ? (

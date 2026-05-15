@@ -4,6 +4,7 @@ export type PresignUploadBody = {
   program_id: string;
   filename: string;
   contentType?: string;
+  client_key?: string;
 };
 
 type ApiEnvelope<T> = {

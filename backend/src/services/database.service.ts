@@ -6,6 +6,7 @@ import UserModel from "../database/models/tenant/UserModel";
 import ProgramsModel from "../database/models/tenant/ProgramsModel";
 import SessionModel from "../database/models/tenant/SessionModel";
 import AuditLogModel from "../database/models/tenant/AuditLogModel";
+import BulkUploadJobModel from "../database/models/tenant/BulkUploadJobModel";
 
 const databaseName = process.env.DATABASE_NAME as string;
 const databaseUser = process.env.DATABASE_USER as string;
@@ -70,6 +71,7 @@ class DatabaseService {
       ProgramsModel: ProgramsModel.initProgramsModel(connection),
       SessionModel: SessionModel.initSessionModel(connection),
       AuditLogModel: AuditLogModel.initAuditLogModel(connection),
+      BulkUploadJobModel: BulkUploadJobModel.initBulkUploadJobModel(connection),
     };
 
     Object.values(models).forEach((model: any) => {

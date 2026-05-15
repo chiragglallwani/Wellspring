@@ -1,12 +1,18 @@
 import { Router } from "express";
 import {
   bulkLinkSessionMedia,
+  checkBulkExistingClientKeys,
+  getBulkUploadJobStatus,
   getSessionMediaPlaybackUrl,
   presignSessionUpload,
+  startBulkUploadJob,
 } from "../controllers/upload.controller";
 import { csvUpload } from "../middlewares/uploadCsv.middleware";
 import {
+  bulkExistingClientKeysValidator,
   bulkMediaCsvValidator,
+  bulkUploadJobStatusValidator,
+  bulkUploadJobValidator,
   mediaPlaybackUrlValidator,
   presignUploadValidator,
 } from "../middlewares/validators/upload.validators";
@@ -32,6 +38,25 @@ router.post(
   bulkMediaCsvValidator,
   validateRequest,
   bulkLinkSessionMedia,
+);
+router.post(
+  "/bulk-jobs/existing-client-keys",
+  bulkExistingClientKeysValidator,
+  validateRequest,
+  checkBulkExistingClientKeys,
+);
+router.post(
+  "/bulk-jobs",
+  csvUpload.single("file"),
+  bulkUploadJobValidator,
+  validateRequest,
+  startBulkUploadJob,
+);
+router.get(
+  "/bulk-jobs/:jobId",
+  bulkUploadJobStatusValidator,
+  validateRequest,
+  getBulkUploadJobStatus,
 );
 
 export default router;

@@ -4,7 +4,7 @@ export type Page =
   | "programs"
   | "sessions"
   | "media"
-  | "csv"
+  | "bulk-uploads"
   | "audit"
   | "login";
 
@@ -87,12 +87,17 @@ export const sessionFormSchema = z.object({
   instructor_name: z.string().trim().min(1, "Instructor name is required"),
   client_key: z.string().trim().max(255).optional(),
   tags: z.string().trim().max(500).optional(),
-  object_key: z.string().trim().min(1, "Upload a media file before saving"),
+  media_file_path: z
+    .string()
+    .trim()
+    .min(1, "Upload a media file before saving"),
 });
 
 export type SessionFormValues = z.infer<typeof sessionFormSchema>;
 
-export const sessionEditFormSchema = sessionFormSchema.omit({ object_key: true });
+export const sessionEditFormSchema = sessionFormSchema.omit({
+  media_file_path: true,
+});
 
 export type SessionEditFormValues = z.infer<typeof sessionEditFormSchema>;
 

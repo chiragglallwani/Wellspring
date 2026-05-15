@@ -21,7 +21,7 @@ export function Sidebar() {
   const navItems = [
     { id: "programs" as Page, label: "Programs", icon: LayoutList },
     { id: "sessions" as Page, label: "Sessions", icon: Calendar },
-    { id: "csv" as Page, label: "CSV Upload", icon: FileUp },
+    { id: "bulk-uploads" as Page, label: "Bulk Uploads", icon: FileUp },
     { id: "audit" as Page, label: "Audit Log", icon: Activity },
   ];
 

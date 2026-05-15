@@ -259,7 +259,7 @@ class S3Service {
     if (!key.startsWith(prefix)) {
       throw new HttpError(
         400,
-        "object_key does not match this tenant and program",
+        "media path does not match this tenant and program",
       );
     }
     const remainder = key.slice(prefix.length);
