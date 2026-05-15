@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import sessionService from "../services/modules/session.service";
-import { getPagination } from "../utils/http";
 
 const getSessionPayload = (req: Request) => {
   const {
@@ -41,15 +40,7 @@ export const createSession = async (req: Request, res: Response) => {
 };
 
 export const listSessions = async (req: Request, res: Response) => {
-  const { page, limit, offset } = getPagination(req.query);
-  const params = {
-    tenantId: req.user!.tenantId,
-    page,
-    limit,
-    offset,
-    programId: req.query.programId as string,
-  };
-  const result = await sessionService.listSessions(params);
+  const result = await sessionService.listSessions(req.user!.tenantId);
 
   res.status(200).json(result);
 };

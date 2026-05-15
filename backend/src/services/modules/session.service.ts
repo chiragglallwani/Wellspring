@@ -1,4 +1,5 @@
 import SessionModel from "../../database/models/tenant/SessionModel";
+import ProgramsModel from "../../database/models/tenant/ProgramsModel";
 import { HttpError } from "../../utils/http";
 import { EventTypes } from "../../events/types/EventTypes";
 import eventService from "../../events/event.service";
@@ -19,14 +20,6 @@ type SessionPayload = {
   object_key?: string;
   /** Same value as object_key; use one or the other. Validated against tenant/program and HeadObject. */
   media_file_path?: string;
-};
-
-type SessionListParams = {
-  tenantId: string;
-  page: number;
-  limit: number;
-  offset: number;
-  programId: string;
 };
 
 type ReorderSessionPayload = {
@@ -121,34 +114,49 @@ class SessionService {
     }
   }
 
-  async listSessions(params: SessionListParams) {
-    const transaction = await SessionModel.sequelize!.transaction();
+  async listSessions(_tenantId: string) {
+    const transaction = await ProgramsModel.sequelize!.transaction();
 
     try {
-      logger.info("Fetching sessions");
-      const { rows, count } = await SessionModel.findAndCountAll({
-        where: { program_id: params.programId },
-        order: [["ordered_position", "ASC"]],
-        limit: params.limit,
-        offset: params.offset,
+      logger.info("Fetching sessions grouped by program");
+      const programs = await ProgramsModel.findAll({
+        include: [
+          {
+            model: SessionModel,
+            as: "sessions",
+            required: false,
+            separate: true,
+            order: [["ordered_position", "ASC"]],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
         transaction,
       });
 
       await transaction.commit();
       logger.info("Sessions fetched successfully");
 
+      const data = programs.map((program) => {
+        const p = program.get({ plain: true }) as {
+          program_id: string;
+          name: string;
+          description: string;
+          sessions?: Record<string, unknown>[];
+        };
+        const sessions = p.sessions ?? [];
+        return {
+          program_id: p.program_id,
+          name: p.name,
+          description: p.description,
+          sessionsLength: sessions.length,
+          sessions,
+        };
+      });
+
       return {
         status: ApiResponseStatus.SUCCESS,
         message: "Sessions fetched successfully",
-        data: {
-          items: rows,
-          pagination: {
-            page: params.page,
-            limit: params.limit,
-            total: count,
-            totalPages: Math.ceil(count / params.limit),
-          },
-        },
+        data: { programs: data },
       };
     } catch (error) {
       await transaction.rollback();
@@ -261,7 +269,23 @@ class SessionService {
         throw new HttpError(404, "Session not found");
       }
 
+      const programId = session.program_id;
+
       await session.destroy({ transaction });
+
+      const remaining = await SessionModel.findAll({
+        where: { program_id: programId },
+        order: [["ordered_position", "ASC"]],
+        transaction,
+      });
+
+      let positionsChanged = false;
+      for (const [index, row] of remaining.entries()) {
+        if (row.ordered_position !== index) {
+          await row.update({ ordered_position: index }, { transaction });
+          positionsChanged = true;
+        }
+      }
 
       eventService.emitEventHelper(EventTypes.SESSION_DELETED, {
         tenantId,
@@ -271,13 +295,23 @@ class SessionService {
         transaction,
       });
 
+      if (positionsChanged) {
+        eventService.emitEventHelper(EventTypes.SESSION_REORDERED, {
+          tenantId,
+          actor,
+          action: EventTypes.SESSION_REORDERED,
+          targetEntity: "SessionModel",
+          transaction,
+        });
+      }
+
       await transaction.commit();
       logger.info("Session deleted successfully");
 
       return {
         status: ApiResponseStatus.SUCCESS,
         message: "Session deleted successfully",
-        data: { message: "Session deleted" },
+        data: { message: "Session deleted", program_id: programId },
       };
     } catch (error) {
       await transaction.rollback();

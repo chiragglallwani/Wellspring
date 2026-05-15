@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
 import logger from "./config/logger.js";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
@@ -12,7 +13,9 @@ import { asyncStorageMiddleware } from "./utils/asyncstorage.js";
 import routes from "./routes";
 import { errorMiddleware } from "./middlewares/error.middleware";
 
-dotenv.config();
+const backendRoot = process.cwd();
+dotenv.config({ path: path.join(backendRoot, ".env") });
+dotenv.config({ path: path.join(backendRoot, ".env.local"), override: true });
 
 async function intializeDatabase() {
   try {
@@ -40,8 +43,9 @@ app.use(
   cors({
     origin: process.env.FRONTEND_URL,
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "csrf_token"],
+    exposedHeaders: ["Authorization", "csrf_token"],
   }),
 );
 app.use(express.json());

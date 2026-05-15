@@ -16,55 +16,173 @@ import logger from "../../config/logger";
 const DEFAULT_PUT_EXPIRES = 3600;
 const DEFAULT_GET_EXPIRES = 3600;
 
+/** Docker service name `minio` is not resolvable from the user's browser. */
+function resolvePublicEndpoint(internalEndpoint: string): string {
+  const fromEnv = process.env.S3_PUBLIC_ENDPOINT?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  try {
+    const internal = new URL(internalEndpoint);
+    if (internal.hostname === "minio") {
+      const port = internal.port || "9000";
+      const publicUrl = `${internal.protocol}//localhost:${port}`;
+      logger.info(
+        "S3_PUBLIC_ENDPOINT not set; defaulting browser presign host to localhost",
+        { internal: internalEndpoint, public: publicUrl },
+      );
+      return publicUrl;
+    }
+  } catch {
+    // fall through
+  }
+
+  return internalEndpoint;
+}
+
+function assertBrowserReachablePresignedUrl(
+  url: string,
+  publicEndpoint: string,
+): void {
+  let signedHost: string;
+  let expectedHost: string;
+  try {
+    signedHost = new URL(url).hostname;
+    expectedHost = new URL(publicEndpoint).hostname;
+  } catch {
+    return;
+  }
+
+  if (signedHost === "minio" || signedHost !== expectedHost) {
+    logger.error("Presigned URL uses a host the browser cannot reach", {
+      signedHost,
+      expectedHost,
+      urlPreview: url.slice(0, 120),
+    });
+    throw new HttpError(
+      500,
+      "Upload URL misconfigured: set S3_PUBLIC_ENDPOINT=http://localhost:9000 for local development",
+    );
+  }
+}
+
+type StorageEnv = {
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** Reachable from the API process (e.g. `http://minio:9000` in Docker). */
+  endpoint: string;
+  /** Reachable from the browser for presigned PUT/GET (e.g. `http://localhost:9000`). */
+  publicEndpoint: string;
+  forcePathStyle: boolean;
+};
+
 class S3Service {
-  private client: S3Client | null = null;
+  private apiClient: S3Client | null = null;
+  private presignClient: S3Client | null = null;
   private bucket: string | null = null;
   private bucketEnsured = false;
 
-  private getBucket(): string {
+  private readEnv(): StorageEnv {
     const bucket = process.env.S3_BUCKET?.trim();
     if (!bucket) {
       throw new HttpError(500, "S3_BUCKET is not configured");
     }
-    return bucket;
-  }
 
-  private getClient(): S3Client {
-    if (this.client) {
-      return this.client;
-    }
-
-    const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
-    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim();
+    const accessKeyId =
+      process.env.AWS_ACCESS_KEY_ID?.trim() ??
+      process.env.MINIO_ROOT_USER?.trim();
+    const secretAccessKey =
+      process.env.AWS_SECRET_ACCESS_KEY?.trim() ??
+      process.env.MINIO_ROOT_PASSWORD?.trim();
     if (!accessKeyId || !secretAccessKey) {
-      throw new HttpError(500, "AWS credentials are not configured");
+      throw new HttpError(
+        500,
+        "Object storage credentials are not configured (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or MINIO_ROOT_USER / MINIO_ROOT_PASSWORD)",
+      );
     }
 
-    const region = process.env.AWS_REGION?.trim() || "us-east-1";
-    const isLocal = process.env.NODE_ENV === "local";
-    const endpoint = "http://127.0.0.1:9000";
-    const forcePathStyle =
-      isLocal ||
-      process.env.S3_FORCE_PATH_STYLE === "true" ||
-      process.env.S3_FORCE_PATH_STYLE === "1";
+    const endpoint =
+      process.env.S3_ENDPOINT?.trim() ||
+      (process.env.NODE_ENV === "local" ? "http://127.0.0.1:9000" : undefined);
+    if (!endpoint) {
+      throw new HttpError(
+        500,
+        "S3_ENDPOINT is not configured (required for MinIO / S3-compatible storage)",
+      );
+    }
 
-    const config: S3ClientConfig = {
-      region,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
+    const publicEndpoint = resolvePublicEndpoint(endpoint);
+
+    const forcePathStyle =
+      process.env.S3_FORCE_PATH_STYLE === "false" ||
+      process.env.S3_FORCE_PATH_STYLE === "0"
+        ? false
+        : true;
+
+    return {
+      bucket,
+      region: process.env.AWS_REGION?.trim() || "us-east-1",
+      accessKeyId,
+      secretAccessKey,
+      endpoint,
+      publicEndpoint,
       forcePathStyle,
     };
+  }
 
-    if (endpoint) {
-      config.endpoint = endpoint;
+  private buildClient(endpoint: string): S3Client {
+    const env = this.readEnv();
+    const config: S3ClientConfig = {
+      region: env.region,
+      credentials: {
+        accessKeyId: env.accessKeyId,
+        secretAccessKey: env.secretAccessKey,
+      },
+      endpoint,
+      forcePathStyle: env.forcePathStyle,
+    };
+    return new S3Client(config);
+  }
+
+  /** Server-side MinIO/S3 client (bucket checks, head object, etc.). */
+  private getApiClient(): S3Client {
+    if (this.apiClient) {
+      return this.apiClient;
     }
+    const env = this.readEnv();
+    this.apiClient = this.buildClient(env.endpoint);
+    this.bucket = env.bucket;
+    logger.info("Object storage API client initialized", {
+      endpoint: env.endpoint,
+      bucket: env.bucket,
+      forcePathStyle: env.forcePathStyle,
+    });
+    return this.apiClient;
+  }
 
-    this.client = new S3Client(config);
+  /** Client used only to sign URLs the browser will call. */
+  private getPresignClient(): S3Client {
+    if (this.presignClient) {
+      return this.presignClient;
+    }
+    const { publicEndpoint, bucket } = this.readEnv();
+    this.presignClient = this.buildClient(publicEndpoint);
+    this.bucket = bucket;
+    logger.info("Object storage presign client initialized", {
+      publicEndpoint,
+      bucket,
+    });
+    return this.presignClient;
+  }
 
-    this.bucket = this.getBucket();
-    return this.client;
+  private getBucket(): string {
+    if (this.bucket) {
+      return this.bucket;
+    }
+    return this.readEnv().bucket;
   }
 
   private async ensureBucket(): Promise<void> {
@@ -72,8 +190,8 @@ class S3Service {
       return;
     }
 
-    const client = this.getClient();
-    const bucket = this.bucket ?? this.getBucket();
+    const client = this.getApiClient();
+    const bucket = this.getBucket();
 
     try {
       await client.send(new HeadBucketCommand({ Bucket: bucket }));
@@ -81,9 +199,9 @@ class S3Service {
       return;
     } catch {
       if (process.env.NODE_ENV !== "local") {
-        throw new HttpError(500, "S3 bucket is not accessible");
+        throw new HttpError(500, "Storage bucket is not accessible");
       }
-      logger.info("S3 bucket missing, attempting create (local only)", {
+      logger.info("Storage bucket missing, attempting create (local only)", {
         bucket,
       });
     }
@@ -102,11 +220,11 @@ class S3Service {
         this.bucketEnsured = true;
         return;
       }
-      logger.error("Failed to ensure S3 bucket", {
+      logger.error("Failed to ensure storage bucket", {
         bucket,
         error: error instanceof Error ? error.message : "Unknown error",
       });
-      throw new HttpError(500, "Unable to access or create S3 bucket");
+      throw new HttpError(500, "Unable to access or create storage bucket");
     }
   }
 
@@ -163,8 +281,8 @@ class S3Service {
     options?: { contentType?: string; expiresInSeconds?: number },
   ): Promise<{ url: string; key: string; expiresIn: number }> {
     await this.ensureBucket();
-    const client = this.getClient();
-    const bucket = this.bucket ?? this.getBucket();
+    const client = this.getPresignClient();
+    const bucket = this.getBucket();
     const key = this.buildSessionObjectKey(programId, filename);
     const expiresIn = options?.expiresInSeconds ?? DEFAULT_PUT_EXPIRES;
     const command = new PutObjectCommand({
@@ -173,6 +291,10 @@ class S3Service {
       ContentType: options?.contentType?.trim() || "application/octet-stream",
     });
     const url = await getSignedUrl(client, command, { expiresIn });
+    assertBrowserReachablePresignedUrl(
+      url,
+      this.readEnv().publicEndpoint,
+    );
     return { url, key, expiresIn };
   }
 
@@ -185,8 +307,8 @@ class S3Service {
     options?: { expiresInSeconds?: number },
   ): Promise<{ url: string; key: string; expiresIn: number }> {
     await this.ensureBucket();
-    const client = this.getClient();
-    const bucket = this.bucket ?? this.getBucket();
+    const client = this.getPresignClient();
+    const bucket = this.getBucket();
     const key = this.buildSessionObjectKey(programId, filename);
     const expiresIn = options?.expiresInSeconds ?? DEFAULT_GET_EXPIRES;
     const command = new GetObjectCommand({
@@ -195,12 +317,16 @@ class S3Service {
       ResponseContentDisposition: "inline",
     });
     const url = await getSignedUrl(client, command, { expiresIn });
+    assertBrowserReachablePresignedUrl(
+      url,
+      this.readEnv().publicEndpoint,
+    );
     return { url, key, expiresIn };
   }
 
   async objectExists(key: string): Promise<boolean> {
-    const client = this.getClient();
-    const bucket = this.bucket ?? this.getBucket();
+    const client = this.getApiClient();
+    const bucket = this.getBucket();
     try {
       await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
       return true;

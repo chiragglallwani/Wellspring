@@ -2,15 +2,16 @@ import { Router } from "express";
 import {
   confirmPasswordReset,
   login,
+  logout,
   refresh,
   requestPasswordReset,
   signup,
 } from "../controllers/auth.controller";
+import { authMiddleware } from "../middlewares/auth.middleware";
 import { csrfMiddleware } from "../middlewares/csrf.middleware";
 import {
   confirmPasswordResetValidator,
   loginValidator,
-  refreshValidator,
   requestPasswordResetValidator,
   signupValidator,
 } from "../middlewares/validators/auth.validators";
@@ -20,7 +21,8 @@ const router = Router();
 
 router.post("/signup", signupValidator, validateRequest, signup);
 router.post("/login", loginValidator, validateRequest, login);
-router.post("/refresh", csrfMiddleware, refreshValidator, validateRequest, refresh);
+router.post("/refresh", refresh);
+router.post("/logout", authMiddleware, csrfMiddleware, logout);
 router.post(
   "/password-reset/request",
   requestPasswordResetValidator,

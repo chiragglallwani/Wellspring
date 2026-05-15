@@ -1,10 +1,6 @@
-import { body, param, query } from "express-validator";
+import { body, param, type ValidationChain } from "express-validator";
 
-export const listSessionsValidator = [
-  query("page").isInt({ min: 1 }).toInt(),
-  query("limit").isInt({ min: 1, max: 100 }).toInt(),
-  query("programId").isUUID(),
-];
+export const listSessionsValidator: ValidationChain[] = [];
 
 export const createSessionValidator = [
   body("program_id").isUUID(),

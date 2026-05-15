@@ -13,7 +13,7 @@ export const csrfMiddleware = (
   if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
     return res.status(401).json({
       status: ApiResponseStatus.UNAUTHORIZED,
-      message: "Invalid CSRF token",
+      message: "Your session could not be verified. Please sign in again.",
       error: null,
     });
   }

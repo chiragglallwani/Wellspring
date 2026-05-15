@@ -17,10 +17,6 @@ export const loginValidator = [
   body("password").isString().notEmpty(),
 ];
 
-export const refreshValidator = [
-  body("refreshToken").isString().trim().notEmpty(),
-];
-
 export const requestPasswordResetValidator = [
   body("email").isEmail().normalizeEmail(),
   body("tenantId").optional().isString().trim().notEmpty(),

@@ -19,7 +19,12 @@ import { validateRequest } from "../middlewares/validators/validate.middleware";
 
 const router = Router();
 
-router.get("/", listSessionsValidator, validateRequest, listSessions);
+router.get(
+  "/",
+  ...listSessionsValidator,
+  validateRequest,
+  listSessions,
+);
 router.post("/", createSessionValidator, validateRequest, createSession);
 router.patch("/reorder", reorderSessionsValidator, validateRequest, reorderSessions);
 router.get("/:sessionId", getSessionValidator, validateRequest, getSession);

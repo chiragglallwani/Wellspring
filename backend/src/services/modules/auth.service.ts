@@ -184,7 +184,7 @@ class AuthService {
       });
 
       if (!user) {
-        throw new HttpError(403, "Invalid credentials");
+        throw new HttpError(401, "Invalid email or password.");
       }
 
       const passwordIsValid = await argon2.verify(
@@ -193,7 +193,7 @@ class AuthService {
       );
 
       if (!passwordIsValid) {
-        throw new HttpError(403, "Invalid credentials");
+        throw new HttpError(401, "Invalid email or password.");
       }
 
       const tokens = this.createSessionTokens(user, tenant);
@@ -317,6 +317,17 @@ class AuthService {
 
       throw error;
     }
+  }
+
+  async logout(payload: { userId: string }) {
+    const user = await UserModel.findByPk(payload.userId);
+    if (user) {
+      await user.update({ refreshToken: null });
+    }
+    return {
+      status: ApiResponseStatus.SUCCESS,
+      message: "Logged out",
+    };
   }
 
   async confirmPasswordReset(payload: ResetConfirmPayload) {

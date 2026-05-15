@@ -5,6 +5,9 @@ services:
     command: npm run dev
     env_file:
       - .env.local
+    environment:
+      # Must be reachable from the host browser (not the Docker network hostname).
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
     ports:
       - "4443:4443"
     volumes:
@@ -46,6 +49,8 @@ services:
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: minio12345
+      # Allow browser uploads via presigned URLs from the Next.js dev server
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3000"
     ports:
       - "9000:9000"
       - "9001:9001"
