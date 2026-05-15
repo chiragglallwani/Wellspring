@@ -7,7 +7,6 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,7 +57,7 @@ function mapRowToProgram(row: ApiProgramRow): Program {
     category: "Program",
     status: row.isActive ? "LIVE" : "DRAFT",
     dateCreated: formatProgramDate(row.createdAt),
-    sessionsCount: row.length,
+    sessionsCount: row.sessionsCount ?? 0,
   };
 }
 

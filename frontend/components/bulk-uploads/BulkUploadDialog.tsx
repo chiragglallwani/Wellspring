@@ -194,7 +194,7 @@ export function BulkUploadDialog({
             client_key: clientKey,
             contentType: row.file.type || undefined,
           });
-          const { presignedUploadUrl, key } = presignRes.data.data;
+          const { presignedUploadUrl } = presignRes.data.data;
 
           const uploadRes = await fetch(presignedUploadUrl, {
             method: "PUT",
@@ -208,9 +208,7 @@ export function BulkUploadDialog({
 
           setMediaRows((prev) =>
             prev.map((r) =>
-              r.id === row.id
-                ? { ...r, status: "done", error: undefined }
-                : r,
+              r.id === row.id ? { ...r, status: "done", error: undefined } : r,
             ),
           );
         } catch (error) {
@@ -562,9 +560,10 @@ export function BulkUploadDialog({
                 <code className="text-xs bg-muted px-1 rounded">
                   ordered_position
                 </code>
-                .{" "}
-                Media must be uploaded in step 1 with matching{" "}
-                <code className="text-xs bg-muted px-1 rounded">client_key</code>
+                . Media must be uploaded in step 1 with matching{" "}
+                <code className="text-xs bg-muted px-1 rounded">
+                  client_key
+                </code>
                 .
               </p>
               <div className="rounded-2xl border border-dashed p-8 text-center">

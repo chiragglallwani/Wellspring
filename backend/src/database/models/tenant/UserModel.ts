@@ -7,6 +7,8 @@ class UserModel extends BaseModel {
   declare email: string;
   declare password: string;
   declare refreshToken: string;
+  declare resetCode: string | null;
+  declare resetCodeExpiresAt: Date | null;
   declare createdAt: Date;
   declare updatedAt: Date;
   declare deletedAt: Date | null;
@@ -35,6 +37,16 @@ class UserModel extends BaseModel {
         refreshToken: {
           type: DataTypes.TEXT,
           allowNull: true,
+        },
+        resetCode: {
+          type: DataTypes.STRING(6),
+          allowNull: true,
+          field: "reset_code",
+        },
+        resetCodeExpiresAt: {
+          type: DataTypes.DATE,
+          allowNull: true,
+          field: "reset_code_expires_at",
         },
       },
       {

@@ -62,6 +62,44 @@ export async function signup(payload: RegisterFormValues) {
   }
 }
 
+export async function requestPasswordReset(email: string) {
+  try {
+    return await api.post("/auth/password-reset/request", { email });
+  } catch (error) {
+    throw new Error(
+      getApiErrorMessage(error, "Unable to send a reset code. Please try again."),
+    );
+  }
+}
+
+export async function verifyPasswordResetOtp(email: string, code: string) {
+  try {
+    return await api.post("/auth/password-reset/verify", { email, code });
+  } catch (error) {
+    throw new Error(
+      getApiErrorMessage(error, "Invalid or expired verification code."),
+    );
+  }
+}
+
+export async function confirmPasswordReset(
+  email: string,
+  code: string,
+  password: string,
+) {
+  try {
+    return await api.post("/auth/password-reset/confirm", {
+      email,
+      code,
+      password,
+    });
+  } catch (error) {
+    throw new Error(
+      getApiErrorMessage(error, "Unable to reset your password. Please try again."),
+    );
+  }
+}
+
 export async function logout() {
   try {
     await api.post("/auth/logout", {});

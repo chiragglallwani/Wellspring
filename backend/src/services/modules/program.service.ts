@@ -1,5 +1,7 @@
 import crypto from "crypto";
+import { Op, Sequelize } from "sequelize";
 import ProgramsModel from "../../database/models/tenant/ProgramsModel";
+import SessionModel from "../../database/models/tenant/SessionModel";
 import { HttpError } from "../../utils/http";
 import auditService from "./audit.service";
 import { ApiResponseStatus } from "../../constants/apiResponse";
@@ -75,6 +77,38 @@ class ProgramService {
         transaction,
       });
 
+      const programIds = rows.map((row) => row.program_id);
+      const sessionCountRows =
+        programIds.length === 0
+          ? []
+          : await SessionModel.findAll({
+              attributes: [
+                "program_id",
+                [Sequelize.fn("COUNT", Sequelize.col("session_id")), "sessionsCount"],
+              ],
+              where: { program_id: { [Op.in]: programIds } },
+              group: ["program_id"],
+              transaction,
+              raw: true,
+            });
+
+      type SessionCountRow = {
+        program_id: string;
+        sessionsCount: string | number;
+      };
+
+      const sessionsCountByProgramId = new Map(
+        (sessionCountRows as unknown as SessionCountRow[]).map((row) => [
+          row.program_id,
+          Number(row.sessionsCount),
+        ]),
+      );
+
+      const items = rows.map((row) => ({
+        ...row.get({ plain: true }),
+        sessionsCount: sessionsCountByProgramId.get(row.program_id) ?? 0,
+      }));
+
       await transaction.commit();
       logger.info("Programs fetched successfully");
 
@@ -82,7 +116,7 @@ class ProgramService {
         status: ApiResponseStatus.SUCCESS,
         message: "Programs fetched successfully",
         data: {
-          items: rows,
+          items,
           pagination: {
             page: params.page,
             limit: params.limit,

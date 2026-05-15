@@ -90,7 +90,7 @@ export function CSVPage() {
 
           {/* Failed Rows Table */}
           <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden flex flex-col">
-            <div className="bg-destructive/[0.03] px-8 py-5 flex items-center justify-between border-b border-destructive/10">
+            <div className="bg-destructive/3 px-8 py-5 flex items-center justify-between border-b border-destructive/10">
               <div className="flex items-center gap-4">
                 <AlertCircle className="w-5 h-5 text-destructive" />
                 <span className="text-lg font-bold text-destructive">

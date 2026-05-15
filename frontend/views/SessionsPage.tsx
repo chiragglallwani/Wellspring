@@ -6,10 +6,10 @@ import {
   GripHorizontal,
   Trash2,
   Clock,
-  Eye,
   Plus,
   Film,
   Pencil,
+  Headphones,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -66,7 +66,11 @@ type ProgramSessionsReorderListProps = {
   programName: string;
   sessions: ApiSessionRow[];
   onSessionsChange: (programId: string, sessions: ApiSessionRow[]) => void;
-  onEdit: (programId: string, programName: string, session: ApiSessionRow) => void;
+  onEdit: (
+    programId: string,
+    programName: string,
+    session: ApiSessionRow,
+  ) => void;
   onDeleteRequest: (programId: string, session: ApiSessionRow) => void;
   reorderingDisabled?: boolean;
   deletingSessionId?: string | null;
@@ -132,7 +136,14 @@ function ProgramSessionsReorderList({
             </div>
 
             <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-xl border border-border/50 bg-muted">
-              <Film className="h-7 w-7 text-muted-foreground" aria-hidden />
+              {session.type === "video" ? (
+                <Film className="h-7 w-7 text-muted-foreground" aria-hidden />
+              ) : (
+                <Headphones
+                  className="h-7 w-7 text-muted-foreground"
+                  aria-hidden
+                />
+              )}
             </div>
 
             <div className="min-w-0 flex-1">
@@ -168,7 +179,9 @@ function ProgramSessionsReorderList({
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9 text-muted-foreground hover:bg-destructive/5 hover:text-destructive"
-                disabled={reorderingDisabled || deletingSessionId === session.session_id}
+                disabled={
+                  reorderingDisabled || deletingSessionId === session.session_id
+                }
                 aria-label={`Delete ${session.title}`}
                 onClick={() => onDeleteRequest(programId, session)}
               >
@@ -188,7 +201,9 @@ export default function SessionsPage() {
   const [sheet, setSheet] = useState<SessionSheetState>({ kind: "closed" });
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
+    null,
+  );
   const [pendingDelete, setPendingDelete] = useState<{
     programId: string;
     session: ApiSessionRow;
@@ -299,20 +314,10 @@ export default function SessionsPage() {
           <h2 className="text-3xl font-bold tracking-tight text-primary">
             Session Organizer
           </h2>
-          <p className="mt-2 max-w-lg font-medium text-muted-foreground">
+          <p className="mt-2 font-medium text-muted-foreground">
             Expand a program to view and drag sessions into the order patients
             should experience them. Changes save automatically when you reorder.
           </p>
-        </div>
-        <div className="flex gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 border-primary px-6 font-bold text-primary hover:bg-primary/5"
-          >
-            <Eye className="mr-2 h-4 w-4" />
-            Preview Program
-          </Button>
         </div>
       </div>
 

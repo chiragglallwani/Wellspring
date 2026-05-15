@@ -31,6 +31,35 @@ export const registerSchema = z.object({
 
 export type RegisterFormValues = z.infer<typeof registerSchema>;
 
+export const forgotPasswordEmailSchema = z.object({
+  email: z.string().email("Invalid email address"),
+});
+
+export type ForgotPasswordEmailValues = z.infer<typeof forgotPasswordEmailSchema>;
+
+export const forgotPasswordOtpSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
+});
+
+export type ForgotPasswordOtpValues = z.infer<typeof forgotPasswordOtpSchema>;
+
+export const forgotPasswordNewPasswordSchema = z
+  .object({
+    password: passwordPolicy,
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+export type ForgotPasswordNewPasswordValues = z.infer<
+  typeof forgotPasswordNewPasswordSchema
+>;
+
 /** User profile held in Redux after login or session restore (no tokens). */
 export interface StoredAuthProfile {
   name: string;

@@ -16,6 +16,7 @@ export type ApiProgramRow = {
   description: string;
   length: number;
   isActive: boolean;
+  sessionsCount?: number;
   createdAt?: string;
   updatedAt?: string;
 };

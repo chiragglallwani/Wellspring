@@ -111,26 +111,38 @@ export const logout = async (req: Request, res: Response) => {
 };
 
 export const requestPasswordReset = async (req: Request, res: Response) => {
-  const { email, tenantId } = req.body;
-  const result = await authService.requestPasswordReset({ email, tenantId });
+  const { email } = req.body;
+  const result = await authService.requestPasswordReset({ email });
 
   res.status(200).json({
     status: ApiResponseStatus.SUCCESS,
-    message: "Password reset requested",
-    data: result,
+    message: result.message,
+    data: result.data,
+  });
+};
+
+export const verifyPasswordResetOtp = async (req: Request, res: Response) => {
+  const { email, code } = req.body;
+  const result = await authService.verifyPasswordResetOtp({ email, code });
+
+  res.status(200).json({
+    status: ApiResponseStatus.SUCCESS,
+    message: result.message,
+    data: result.data,
   });
 };
 
 export const confirmPasswordReset = async (req: Request, res: Response) => {
-  const { resetToken, password } = req.body;
+  const { email, code, password } = req.body;
   const result = await authService.confirmPasswordReset({
-    resetToken,
+    email,
+    code,
     password,
   });
 
   res.status(200).json({
     status: ApiResponseStatus.SUCCESS,
-    message: "Password reset successful",
-    data: result,
+    message: result.message,
+    data: result.data,
   });
 };

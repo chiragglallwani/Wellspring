@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileUp, Plus } from "lucide-react";
+import { FileUp } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { BulkUploadDialog } from "@/components/bulk-uploads/BulkUploadDialog";

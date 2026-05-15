@@ -6,6 +6,7 @@ import {
   refresh,
   requestPasswordReset,
   signup,
+  verifyPasswordResetOtp,
 } from "../controllers/auth.controller";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { csrfMiddleware } from "../middlewares/csrf.middleware";
@@ -14,6 +15,7 @@ import {
   loginValidator,
   requestPasswordResetValidator,
   signupValidator,
+  verifyPasswordResetOtpValidator,
 } from "../middlewares/validators/auth.validators";
 import { validateRequest } from "../middlewares/validators/validate.middleware";
 
@@ -28,6 +30,12 @@ router.post(
   requestPasswordResetValidator,
   validateRequest,
   requestPasswordReset,
+);
+router.post(
+  "/password-reset/verify",
+  verifyPasswordResetOtpValidator,
+  validateRequest,
+  verifyPasswordResetOtp,
 );
 router.post(
   "/password-reset/confirm",
