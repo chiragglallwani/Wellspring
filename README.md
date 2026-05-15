@@ -1,15 +1,17 @@
 # Wellspring
 
+## Loom URL: https://www.loom.com/share/c3e7ce9176974052ac22223f89f375bf
+
 Creator admin portal for managing wellness programs, sessions, media uploads, and audit logs.
 
 ## Prerequisites
 
 Install the following before you begin:
 
-| Software | Purpose | Get it |
-|----------|---------|--------|
+| Software                                        | Purpose                                              | Get it                                                                                           |
+| ----------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | **Docker Desktop** (or Docker Engine + Compose) | Runs the API, PostgreSQL, Mailhog, and MinIO locally | [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop) |
-| **Node.js** (v20 LTS or newer recommended) | Runs the Next.js frontend on your machine | [https://nodejs.org](https://nodejs.org) |
+| **Node.js** (v20 LTS or newer recommended)      | Runs the Next.js frontend on your machine            | [https://nodejs.org](https://nodejs.org)                                                         |
 
 Verify installations:
 
@@ -72,19 +74,19 @@ Open **http://localhost:3000** in your browser.
 
 ## Local services
 
-| Service | URL | Notes |
-|---------|-----|--------|
-| Frontend | http://localhost:3000 | Next.js dev server |
-| API | http://localhost:4443 | Express backend (`/api/v1`) |
+| Service            | URL                   | Notes                                           |
+| ------------------ | --------------------- | ----------------------------------------------- |
+| Frontend           | http://localhost:3000 | Next.js dev server                              |
+| API                | http://localhost:4443 | Express backend (`/api/v1`)                     |
 | Mailhog (email UI) | http://localhost:8025 | Catches outbound mail (e.g. password reset OTP) |
-| MinIO console | http://localhost:9001 | Object storage admin (`minio` / `minio12345`) |
+| MinIO console      | http://localhost:9001 | Object storage admin (`minio` / `minio12345`)   |
 
 ## Demo accounts (optional)
 
 If you have run database migrations including the seed migration (`00011-seed-demo-users-and-programs`), you can sign in with:
 
-| Email | Password |
-|-------|----------|
+| Email                    | Password       |
+| ------------------------ | -------------- |
 | `demo1@wellspring.local` | `Wellspring1!` |
 | `demo2@wellspring.local` | `Wellspring1!` |
 
